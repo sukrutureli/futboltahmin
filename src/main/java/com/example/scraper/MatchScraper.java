@@ -166,7 +166,7 @@ public class MatchScraper {
 			}
 			prevCount = seen.size();
 
-			if (stable >= 3) {
+			if (stable >= 10) {
 				System.out.println("✅ Scroll tamamlandı (sabitliğe ulaşıldı)");
 				break;
 			}
@@ -396,3 +396,4 @@ public class MatchScraper {
 		}
 	}
 }
+
