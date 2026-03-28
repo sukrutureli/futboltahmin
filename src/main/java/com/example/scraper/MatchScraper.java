@@ -500,5 +500,26 @@ public class MatchScraper {
 		} catch (Exception ignore) {}
 		return -1;
 	}
+
+	private WebElement findMatchCard(WebElement matchLink) {
+		try {
+			return (WebElement) js.executeScript("""
+				let el = arguments[0];
+				while (el) {
+					if (el.matches && (
+							el.matches("div[data-test-id^='r_']") ||
+							el.querySelector("[data-test-id='event_mbs']") ||
+							el.querySelector("button[data-testid*='odd_']")
+					)) {
+						return el;
+					}
+					el = el.parentElement;
+				}
+				return arguments[0].parentElement;
+			""", matchLink);
+		} catch (Exception e) {
+			return matchLink;
+		}
+	}
 }
 
