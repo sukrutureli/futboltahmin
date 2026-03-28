@@ -171,7 +171,10 @@ public class MatchScraper {
 				break;
 			}
 
-			js.executeScript("window.scrollBy(0, " + scrollAmount + ");");
+			WebElement scrollContainer = findScrollableContainer();
+			js.executeScript("arguments[0].scrollTop = arguments[0].scrollTop + arguments[1];",
+					scrollContainer, scrollAmount);
+			clickLoadMoreIfExists();
 			Thread.sleep(800);
 		}
 
@@ -393,6 +396,55 @@ public class MatchScraper {
 		try {
 			driver.quit();
 		} catch (Exception ignore) {
+		}
+	}
+
+	private WebElement findScrollableContainer() {
+		List<By> candidates = Arrays.asList(
+			By.cssSelector("div[class*='scroll']"),
+			By.cssSelector("div[class*='content']"),
+			By.cssSelector("main"),
+			By.cssSelector("body")
+		);
+
+		for (By by : candidates) {
+			try {
+				List<WebElement> els = driver.findElements(by);
+				for (WebElement el : els) {
+					Long sh = (Long) js.executeScript("return arguments[0].scrollHeight;", el);
+					Long ch = (Long) js.executeScript("return arguments[0].clientHeight;", el);
+					if (sh != null && ch != null && sh > ch + 200) {
+						System.out.println("✅ Scroll container bulundu: " + by);
+						return el;
+					}
+				}
+			} catch (Exception ignore) {}
+		}
+
+		System.out.println("⚠️ Özel scroll container bulunamadı, body kullanılacak");
+		return driver.findElement(By.tagName("body"));
+	}
+
+	private void clickLoadMoreIfExists() {
+		List<By> buttons = Arrays.asList(
+			By.xpath("//button[contains(., 'Daha Fazla')]"),
+			By.xpath("//button[contains(., 'Daha fazla')]"),
+			By.xpath("//button[contains(., 'Tümünü Göster')]"),
+			By.cssSelector("button[data-test-id*='load'], button[data-testid*='load']")
+		);
+
+		for (By by : buttons) {
+			try {
+				List<WebElement> els = driver.findElements(by);
+				for (WebElement btn : els) {
+					if (btn.isDisplayed() && btn.isEnabled()) {
+						js.executeScript("arguments[0].click();", btn);
+						System.out.println("➕ Daha fazla butonuna tıklandı");
+						Thread.sleep(1200);
+						return;
+					}
+				}
+			} catch (Exception ignore) {}
 		}
 	}
 }
