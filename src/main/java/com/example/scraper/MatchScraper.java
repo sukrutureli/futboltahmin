@@ -521,5 +521,18 @@ public class MatchScraper {
 			return matchLink;
 		}
 	}
+	private void debugSelectorCounts() {
+    System.out.println("DEBUG row[data-sport-id=1]: " +
+            driver.findElements(By.cssSelector("div[data-test-id^='r_'][data-sport-id='1']")).size());
+
+    System.out.println("DEBUG any row[data-test-id^=r_]: " +
+            driver.findElements(By.cssSelector("[data-test-id^='r_']")).size());
+
+    System.out.println("DEBUG matchName links: " +
+            driver.findElements(By.cssSelector("a[data-test-id='matchName']")).size());
+
+    System.out.println("DEBUG all matchName elems: " +
+            driver.findElements(By.cssSelector("[data-test-id='matchName']")).size());
+}
 }
 
