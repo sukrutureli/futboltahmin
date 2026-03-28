@@ -88,12 +88,16 @@ public class MatchScraper {
 		Set<String> seen = new HashSet<>();
 		List<Map<String, String>> collected = new ArrayList<>();
 
-		int stable = 0, prevCount = 0;
-		int maxScroll = 120;
-		int scrollAmount = 1200;
+		int stable = 0;
+		int maxScroll = 150;
+		int scrollAmount = 1400;
+
+		int prevSeenCount = 0;
+		int prevVisibleCount = 0;
+		long prevScrollHeight = -1;
 
 		int waitTry = 0;
-		while (driver.findElements(eventSelector).isEmpty() && waitTry < 20) {
+		while (driver.findElements(eventSelector).isEmpty() && waitTry < 30) {
 			Thread.sleep(500);
 			waitTry++;
 		}
@@ -102,7 +106,7 @@ public class MatchScraper {
 		WebElement scrollContainer = findScrollableContainer();
 
 		long startTime = System.currentTimeMillis();
-		long maxWaitTime = 300000; // 5 dk
+		long maxWaitTime = 360000; // 6 dk
 
 		for (int i = 0; i < maxScroll; i++) {
 			if (System.currentTimeMillis() - startTime > maxWaitTime) {
@@ -110,11 +114,11 @@ public class MatchScraper {
 				break;
 			}
 
-			Thread.sleep(700);
+			// 1) Mevcut elemanları oku
+			List<WebElement> matchesBefore = driver.findElements(eventSelector);
+			int visibleBefore = matchesBefore.size();
 
-			List<WebElement> matches = driver.findElements(eventSelector);
-
-			for (WebElement el : matches) {
+			for (WebElement el : matchesBefore) {
 				try {
 					WebElement nameEl = el.findElement(By.cssSelector("[data-test-id='matchName']"));
 					String name = nameEl.getText().trim();
@@ -156,26 +160,12 @@ public class MatchScraper {
 				}
 			}
 
-			if (seen.size() == prevCount) {
-				stable++;
-				System.out.println("  ⚠️ Stabilite sayacı: " + stable + "/6 (toplam: " + seen.size() + ")");
-			} else {
-				stable = 0;
-				System.out.println("  ✓ Maç sayısı: " + seen.size() + " (+yeni " + (seen.size() - prevCount) + ")");
-			}
-			prevCount = seen.size();
-
-			if (stable >= 6) {
-				System.out.println("✅ Scroll tamamlandı (sabitliğe ulaşıldı)");
-				break;
-			}
-
+			// 2) Scroll et
 			clickLoadMoreIfExists();
 
-			matches = driver.findElements(eventSelector);
-			if (!matches.isEmpty()) {
+			if (!matchesBefore.isEmpty()) {
 				try {
-					WebElement last = matches.get(matches.size() - 1);
+					WebElement last = matchesBefore.get(matchesBefore.size() - 1);
 					js.executeScript("arguments[0].scrollIntoView({block:'end'});", last);
 				} catch (Exception e) {
 					js.executeScript(
@@ -190,12 +180,48 @@ public class MatchScraper {
 				);
 			}
 
-			Thread.sleep(1200);
-		}
+			// 3) Yeni içerik yüklenmesi için aktif bekle
+			boolean changed = waitForNewContent(eventSelector, scrollContainer, visibleBefore, 7000);
 
-		System.out.println("🧩 TOPLAM MAÇ: " + seen.size());
-		return collected;
-	}
+			// 4) Scroll sonrası durumları tekrar al
+			List<WebElement> matchesAfter = driver.findElements(eventSelector);
+			int visibleAfter = matchesAfter.size();
+
+			long scrollHeight = getScrollHeight(scrollContainer);
+			int seenNow = seen.size();
+
+			boolean growth =
+					changed ||
+					seenNow > prevSeenCount ||
+                visibleAfter > prevVisibleCount ||
+                scrollHeight > prevScrollHeight;
+
+        if (growth) {
+            stable = 0;
+            System.out.println("  ✓ İlerleme var | visible: " + visibleAfter
+                    + " | unique: " + seenNow
+                    + " | scrollHeight: " + scrollHeight);
+        } else {
+            stable++;
+            System.out.println("  ⚠️ Stabilite sayacı: " + stable + "/12"
+                    + " | visible: " + visibleAfter
+                    + " | unique: " + seenNow
+                    + " | scrollHeight: " + scrollHeight);
+        }
+
+        prevSeenCount = seenNow;
+        prevVisibleCount = visibleAfter;
+        prevScrollHeight = scrollHeight;
+
+        if (stable >= 12) {
+            System.out.println("✅ Scroll tamamlandı (artık yeni içerik gelmiyor)");
+            break;
+        }
+    }
+
+    System.out.println("🧩 TOPLAM MAÇ: " + seen.size());
+    return collected;
+}
 
 	private String getOdd(WebElement matchEl, String testId) {
 		try {
@@ -461,6 +487,38 @@ public class MatchScraper {
 				}
 			} catch (Exception ignore) {}
 		}
+	}
+
+	private boolean waitForNewContent(By eventSelector, WebElement scrollContainer, int oldVisibleCount, int timeoutMs) {
+		long end = System.currentTimeMillis() + timeoutMs;
+		long oldHeight = getScrollHeight(scrollContainer);
+
+		while (System.currentTimeMillis() < end) {
+			try {
+				Thread.sleep(250);
+			} catch (InterruptedException e) {
+				Thread.currentThread().interrupt();
+				return false;
+			}
+
+			int newVisibleCount = driver.findElements(eventSelector).size();
+			long newHeight = getScrollHeight(scrollContainer);
+
+			if (newVisibleCount > oldVisibleCount || newHeight > oldHeight) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private long getScrollHeight(WebElement el) {
+		try {
+			Object val = js.executeScript("return arguments[0].scrollHeight;", el);
+			if (val instanceof Number) {
+				return ((Number) val).longValue();
+			}
+		} catch (Exception ignore) {}
+		return -1;
 	}
 }
 
