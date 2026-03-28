@@ -89,8 +89,8 @@ public class MatchScraper {
 		List<Map<String, String>> collected = new ArrayList<>();
 
 		int stable = 0, prevCount = 0;
-		int maxScroll = 80;
-		int scrollAmount = 800;
+		int maxScroll = 120;
+		int scrollAmount = 1200;
 
 		int waitTry = 0;
 		while (driver.findElements(eventSelector).isEmpty() && waitTry < 20) {
@@ -99,37 +99,42 @@ public class MatchScraper {
 		}
 		System.out.println("⏳ Yeni yapı algılandı (" + waitTry + "sn sonra) - scroll başlıyor...");
 
+		WebElement scrollContainer = findScrollableContainer();
+
 		long startTime = System.currentTimeMillis();
-		long maxWaitTime = 240000; // 4 dakika
+		long maxWaitTime = 300000; // 5 dk
 
 		for (int i = 0; i < maxScroll; i++) {
-			if (System.currentTimeMillis() - startTime > maxWaitTime)
+			if (System.currentTimeMillis() - startTime > maxWaitTime) {
+				System.out.println("⏰ Max bekleme süresi doldu");
 				break;
+			}
 
-			Thread.sleep(400);
+			Thread.sleep(700);
+
 			List<WebElement> matches = driver.findElements(eventSelector);
 
 			for (WebElement el : matches) {
 				try {
 					WebElement nameEl = el.findElement(By.cssSelector("[data-test-id='matchName']"));
 					String name = nameEl.getText().trim();
-					if (name.isEmpty() || seen.contains(name))
-						continue;
-					seen.add(name);
+					if (name.isEmpty()) continue;
+
+					String href = Optional.ofNullable(nameEl.getAttribute("href")).orElse("");
+					String time = "-";
+					try {
+						time = el.findElement(By.cssSelector("span[data-testid^='time']")).getText().trim();
+					} catch (Exception ignore) {}
+
+					String uniqueKey = name + "|" + time + "|" + href;
+					if (seen.contains(uniqueKey)) continue;
+					seen.add(uniqueKey);
 
 					Map<String, String> map = new HashMap<>();
 					map.put("name", name);
-					map.put("url", nameEl.getAttribute("href"));
+					map.put("url", href);
+					map.put("time", time);
 
-					// Saat
-					try {
-						String time = el.findElement(By.cssSelector("span[data-testid^='time']")).getText().trim();
-						map.put("time", time);
-					} catch (Exception ex) {
-						map.put("time", "-");
-					}
-
-					// MBS
 					try {
 						WebElement mbsEl = el.findElement(By.cssSelector("[data-test-id='event_mbs'] span"));
 						map.put("mbs", mbsEl.getText().trim());
@@ -137,45 +142,55 @@ public class MatchScraper {
 						map.put("mbs", "-1");
 					}
 
-					// --- Maç Sonucu (MS1, MS0, MS2)
 					map.put("ms1", getOdd(el, "odd_Maç Sonucu_1"));
 					map.put("ms0", getOdd(el, "odd_Maç Sonucu_X"));
 					map.put("ms2", getOdd(el, "odd_Maç Sonucu_2"));
-
-					// --- 2,5 Gol Alt / Üst
 					map.put("alt", getOdd(el, "odd_2,5 Gol_Alt"));
 					map.put("ust", getOdd(el, "odd_2,5 Gol_Üst"));
-
-					// --- Karşılıklı Gol Var / Yok
 					map.put("var", getOdd(el, "odd_Karş. Gol_Var"));
 					map.put("yok", getOdd(el, "odd_Karş. Gol_Yok"));
 
 					collected.add(map);
-					System.out.println("✅ " + name + " (" + map.get("time") + ") eklendi.");
-
+					System.out.println("✅ " + name + " (" + time + ") eklendi.");
 				} catch (Exception ignore) {
 				}
 			}
 
 			if (seen.size() == prevCount) {
 				stable++;
-				System.out.println("  ⚠️ Stabilite sayacı: " + stable + "/3 (toplam: " + seen.size() + ")");
+				System.out.println("  ⚠️ Stabilite sayacı: " + stable + "/6 (toplam: " + seen.size() + ")");
 			} else {
 				stable = 0;
 				System.out.println("  ✓ Maç sayısı: " + seen.size() + " (+yeni " + (seen.size() - prevCount) + ")");
 			}
 			prevCount = seen.size();
 
-			if (stable >= 10) {
+			if (stable >= 6) {
 				System.out.println("✅ Scroll tamamlandı (sabitliğe ulaşıldı)");
 				break;
 			}
 
-			WebElement scrollContainer = findScrollableContainer();
-			js.executeScript("arguments[0].scrollTop = arguments[0].scrollTop + arguments[1];",
-					scrollContainer, scrollAmount);
 			clickLoadMoreIfExists();
-			Thread.sleep(800);
+
+			matches = driver.findElements(eventSelector);
+			if (!matches.isEmpty()) {
+				try {
+					WebElement last = matches.get(matches.size() - 1);
+					js.executeScript("arguments[0].scrollIntoView({block:'end'});", last);
+				} catch (Exception e) {
+					js.executeScript(
+							"arguments[0].scrollTop = arguments[0].scrollTop + arguments[1];",
+							scrollContainer, scrollAmount
+					);
+				}
+			} else {
+				js.executeScript(
+						"arguments[0].scrollTop = arguments[0].scrollTop + arguments[1];",
+						scrollContainer, scrollAmount
+				);
+			}
+
+			Thread.sleep(1200);
 		}
 
 		System.out.println("🧩 TOPLAM MAÇ: " + seen.size());
