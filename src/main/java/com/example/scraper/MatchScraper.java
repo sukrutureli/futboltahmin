@@ -84,144 +84,124 @@ public class MatchScraper {
 	// MAÇ SATIRLARINI YENİ YAPIYA GÖRE TOPLA
 	// =============================================================
 	private List<Map<String, String>> scrollAndCollectMatchData() throws InterruptedException {
-		By eventSelector = By.cssSelector("div[data-test-id^='r_'][data-sport-id='1']");
+		By matchLinkSelector = By.cssSelector("a[data-test-id='matchName']");
 		Set<String> seen = new HashSet<>();
 		List<Map<String, String>> collected = new ArrayList<>();
 
 		int stable = 0;
-		int maxScroll = 150;
-		int scrollAmount = 1400;
+		int maxScroll = 180;
 
-		int prevSeenCount = 0;
-		int prevVisibleCount = 0;
-		long prevScrollHeight = -1;
+		int prevSeen = 0;
 
-		int waitTry = 0;
-		while (driver.findElements(eventSelector).isEmpty() && waitTry < 30) {
-			Thread.sleep(500);
-			waitTry++;
-		}
-		System.out.println("⏳ Yeni yapı algılandı (" + waitTry + "sn sonra) - scroll başlıyor...");
+		long startTime = System.currentTimeMillis();
+		long maxWaitTime = 360000;
 
 		WebElement scrollContainer = findScrollableContainer();
 
-		long startTime = System.currentTimeMillis();
-		long maxWaitTime = 360000; // 6 dk
+		int waitTry = 0;
+		while (driver.findElements(matchLinkSelector).isEmpty() && waitTry < 30) {
+			Thread.sleep(500);
+			waitTry++;
+		}
+
+		System.out.println("⏳ Match linkleri algılandı (" + waitTry + "sn sonra) - scroll başlıyor...");
 
 		for (int i = 0; i < maxScroll; i++) {
 			if (System.currentTimeMillis() - startTime > maxWaitTime) {
-				System.out.println("⏰ Max bekleme süresi doldu");
+				System.out.println("⏰ Max süre doldu");
 				break;
 			}
 
-			// 1) Mevcut elemanları oku
-			List<WebElement> matchesBefore = driver.findElements(eventSelector);
-			int visibleBefore = matchesBefore.size();
+			List<WebElement> links = driver.findElements(matchLinkSelector);
 
-			for (WebElement el : matchesBefore) {
+			for (WebElement link : links) {
 				try {
-					WebElement nameEl = el.findElement(By.cssSelector("[data-test-id='matchName']"));
-					String name = nameEl.getText().trim();
+					String name = link.getText().trim();
+					String href = Optional.ofNullable(link.getAttribute("href")).orElse("").trim();
+
 					if (name.isEmpty()) continue;
 
-					String href = Optional.ofNullable(nameEl.getAttribute("href")).orElse("");
-					String time = "-";
-					try {
-						time = el.findElement(By.cssSelector("span[data-testid^='time']")).getText().trim();
-					} catch (Exception ignore) {}
-
-					String uniqueKey = name + "|" + time + "|" + href;
+					String uniqueKey = !href.isEmpty() ? href : name;
 					if (seen.contains(uniqueKey)) continue;
 					seen.add(uniqueKey);
+
+					WebElement card = findMatchCard(link);
 
 					Map<String, String> map = new HashMap<>();
 					map.put("name", name);
 					map.put("url", href);
-					map.put("time", time);
 
 					try {
-						WebElement mbsEl = el.findElement(By.cssSelector("[data-test-id='event_mbs'] span"));
+						String time = card.findElement(By.cssSelector("span[data-testid^='time']")).getText().trim();
+						map.put("time", time);
+					} catch (Exception ex) {
+						map.put("time", "-");
+					}
+
+					try {
+						WebElement mbsEl = card.findElement(By.cssSelector("[data-test-id='event_mbs'] span"));
 						map.put("mbs", mbsEl.getText().trim());
 					} catch (Exception ex) {
 						map.put("mbs", "-1");
 					}
 
-					map.put("ms1", getOdd(el, "odd_Maç Sonucu_1"));
-					map.put("ms0", getOdd(el, "odd_Maç Sonucu_X"));
-					map.put("ms2", getOdd(el, "odd_Maç Sonucu_2"));
-					map.put("alt", getOdd(el, "odd_2,5 Gol_Alt"));
-					map.put("ust", getOdd(el, "odd_2,5 Gol_Üst"));
-					map.put("var", getOdd(el, "odd_Karş. Gol_Var"));
-					map.put("yok", getOdd(el, "odd_Karş. Gol_Yok"));
+					map.put("ms1", getOdd(card, "odd_Maç Sonucu_1"));
+					map.put("ms0", getOdd(card, "odd_Maç Sonucu_X"));
+					map.put("ms2", getOdd(card, "odd_Maç Sonucu_2"));
+					map.put("alt", getOdd(card, "odd_2,5 Gol_Alt"));
+					map.put("ust", getOdd(card, "odd_2,5 Gol_Üst"));
+					map.put("var", getOdd(card, "odd_Karş. Gol_Var"));
+					map.put("yok", getOdd(card, "odd_Karş. Gol_Yok"));
 
 					collected.add(map);
-					System.out.println("✅ " + name + " (" + time + ") eklendi.");
-				} catch (Exception ignore) {
+					System.out.println("✅ " + name + " (" + map.get("time") + ") eklendi.");
+				} catch (Exception ex) {
+					System.out.println("⚠️ Kart parse edilemedi: " + ex.getMessage());
 				}
 			}
 
-			// 2) Scroll et
+			int now = seen.size();
+			if (now > prevSeen) {
+				stable = 0;
+				System.out.println("  ✓ Maç sayısı: " + now + " (+yeni " + (now - prevSeen) + ")");
+			} else {
+				stable++;
+				System.out.println("  ⚠️ Stabilite sayacı: " + stable + "/15 (toplam: " + now + ")");
+			}
+			prevSeen = now;
+
+			if (i % 5 == 0) {
+				debugSelectorCounts();
+			}
+
+			if (stable >= 15) {
+				System.out.println("✅ Scroll tamamlandı");
+				break;
+			}
+
 			clickLoadMoreIfExists();
 
-			if (!matchesBefore.isEmpty()) {
+			List<WebElement> currentLinks = driver.findElements(matchLinkSelector);
+			if (!currentLinks.isEmpty()) {
 				try {
-					WebElement last = matchesBefore.get(matchesBefore.size() - 1);
-					js.executeScript("arguments[0].scrollIntoView({block:'end'});", last);
+					WebElement last = currentLinks.get(currentLinks.size() - 1);
+					js.executeScript("arguments[0].scrollIntoView({block:'center'});", last);
+
+					// sanal liste / lazy load için ekstra wheel etkisi
+					last.sendKeys(Keys.PAGE_DOWN);
 				} catch (Exception e) {
-					js.executeScript(
-							"arguments[0].scrollTop = arguments[0].scrollTop + arguments[1];",
-							scrollContainer, scrollAmount
-					);
+					js.executeScript("arguments[0].scrollTop = arguments[0].scrollTop + 1400;", scrollContainer);
 				}
 			} else {
-				js.executeScript(
-						"arguments[0].scrollTop = arguments[0].scrollTop + arguments[1];",
-						scrollContainer, scrollAmount
-				);
+				js.executeScript("arguments[0].scrollTop = arguments[0].scrollTop + 1400;", scrollContainer);
 			}
 
-			// 3) Yeni içerik yüklenmesi için aktif bekle
-			boolean changed = waitForNewContent(eventSelector, scrollContainer, visibleBefore, 7000);
+			Thread.sleep(1500);
+		}
 
-			// 4) Scroll sonrası durumları tekrar al
-			List<WebElement> matchesAfter = driver.findElements(eventSelector);
-			int visibleAfter = matchesAfter.size();
-
-			long scrollHeight = getScrollHeight(scrollContainer);
-			int seenNow = seen.size();
-
-			boolean growth =
-					changed ||
-					seenNow > prevSeenCount ||
-                visibleAfter > prevVisibleCount ||
-                scrollHeight > prevScrollHeight;
-
-        if (growth) {
-            stable = 0;
-            System.out.println("  ✓ İlerleme var | visible: " + visibleAfter
-                    + " | unique: " + seenNow
-                    + " | scrollHeight: " + scrollHeight);
-        } else {
-            stable++;
-            System.out.println("  ⚠️ Stabilite sayacı: " + stable + "/12"
-                    + " | visible: " + visibleAfter
-                    + " | unique: " + seenNow
-                    + " | scrollHeight: " + scrollHeight);
-        }
-
-        prevSeenCount = seenNow;
-        prevVisibleCount = visibleAfter;
-        prevScrollHeight = scrollHeight;
-
-        if (stable >= 12) {
-            System.out.println("✅ Scroll tamamlandı (artık yeni içerik gelmiyor)");
-            break;
-        }
-    }
-
-    System.out.println("🧩 TOPLAM MAÇ: " + seen.size());
-    return collected;
-}
+		System.out.println("🧩 TOPLAM MAÇ: " + seen.size());
+		return collected;
+	}
 
 	private String getOdd(WebElement matchEl, String testId) {
 		try {
