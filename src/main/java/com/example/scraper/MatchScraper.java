@@ -10,8 +10,8 @@ import org.openqa.selenium.chrome.ChromeDriver;
 import org.openqa.selenium.chrome.ChromeOptions;
 import org.openqa.selenium.devtools.DevTools;
 import org.openqa.selenium.devtools.HasDevTools;
-import org.openqa.selenium.devtools.v136.network.Network;
-import org.openqa.selenium.devtools.v136.network.model.RequestId;
+import org.openqa.selenium.devtools.v118.network.Network;
+import org.openqa.selenium.devtools.v118.network.model.RequestId;
 import org.openqa.selenium.support.ui.ExpectedConditions;
 import org.openqa.selenium.support.ui.WebDriverWait;
 
