@@ -291,7 +291,7 @@ public class MatchScraper {
             String date = LocalDate.now(ZoneId.of("Europe/Istanbul"))
                     .format(DateTimeFormatter.ofPattern("dd.MM.yyyy"));
 
-            String url = "https://www.nesine.com/iddaa?et=1&dt=" + date;
+            String url = "https://www.nesine.com/iddaa?et=1&le=1&dt=" + date;
 
             System.out.println("🔗 URL açılıyor: " + url);
             driver.manage().deleteAllCookies();
@@ -316,7 +316,7 @@ public class MatchScraper {
             }
 
             System.out.println("✅ Toplam benzersiz maç: " + finalMatches.size());
-            dumpInterestingCapturedResponses();
+            //dumpInterestingCapturedResponses();
 
             int index = 0;
             for (Map<String, String> data : finalMatches) {
@@ -755,7 +755,7 @@ public class MatchScraper {
             prevSeen = now;
 
             if (i % 5 == 0) {
-                debugSelectorCounts();
+                //debugSelectorCounts();
             }
 
             if (stable >= 15) {
