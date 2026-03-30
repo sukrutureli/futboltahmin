@@ -8,18 +8,34 @@ import com.example.model.TeamMatchHistory;
 import org.openqa.selenium.*;
 import org.openqa.selenium.chrome.ChromeDriver;
 import org.openqa.selenium.chrome.ChromeOptions;
+import org.openqa.selenium.devtools.DevTools;
+import org.openqa.selenium.devtools.HasDevTools;
+import org.openqa.selenium.devtools.v136.network.Network;
+import org.openqa.selenium.devtools.v136.network.model.RequestId;
 import org.openqa.selenium.support.ui.ExpectedConditions;
 import org.openqa.selenium.support.ui.WebDriverWait;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.*;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Predicate;
 
 public class MatchScraper {
 
 	private WebDriver driver;
 	private JavascriptExecutor js;
 	private WebDriverWait wait;
+
+	// DevTools / Network
+	private DevTools devTools;
+	private final Map<String, String> capturedResponses = new ConcurrentHashMap<>();
+	private final AtomicInteger responseCounter = new AtomicInteger(0);
 
 	public MatchScraper() {
 		setupDriver();
@@ -30,31 +46,202 @@ public class MatchScraper {
 	// =============================================================
 	private void setupDriver() {
 		ChromeOptions options = new ChromeOptions();
-		options.addArguments("--headless=new", "--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu",
-				"--window-size=1920,1080", "--disable-blink-features=AutomationControlled",
-				"user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119 Safari/537.36");
-		driver = new ChromeDriver(options);
+		options.addArguments(
+				"--headless=new",
+				"--no-sandbox",
+				"--disable-dev-shm-usage",
+				"--disable-gpu",
+				"--window-size=1920,1080",
+				"--disable-blink-features=AutomationControlled",
+				"user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119 Safari/537.36"
+		);
+
+		ChromeDriver chromeDriver = new ChromeDriver(options);
+		driver = chromeDriver;
 		js = (JavascriptExecutor) driver;
 		wait = new WebDriverWait(driver, Duration.ofSeconds(20));
+
+		try {
+			devTools = ((HasDevTools) chromeDriver).getDevTools();
+			devTools.createSession();
+			devTools.send(Network.enable(Optional.empty(), Optional.empty(), Optional.empty()));
+			System.out.println("✅ DevTools Network aktif");
+		} catch (Exception e) {
+			System.out.println("⚠️ DevTools başlatılamadı: " + e.getMessage());
+		}
 	}
 
 	// =============================================================
-	// GÜNLÜK MAÇLARI ÇEK (YENİ NESİNE)
+	// NETWORK CAPTURE
+	// =============================================================
+	private void startRequestLogging() {
+		if (devTools == null) {
+			System.out.println("⚠️ DevTools yok, request log başlatılamadı");
+			return;
+		}
+
+		devTools.addListener(Network.requestWillBeSent(), req -> {
+			try {
+				String url = req.getRequest().getUrl();
+				String u = url.toLowerCase(Locale.ROOT);
+
+				if (u.contains("iddaa")
+						|| u.contains("match")
+						|| u.contains("odd")
+						|| u.contains("event")
+						|| u.contains("program")
+						|| u.contains("bet")
+						|| u.contains("sports")
+						|| u.contains("coupon")
+						|| u.contains("graphql")) {
+					System.out.println("➡️ Request: " + req.getRequest().getMethod() + " " + url);
+				}
+			} catch (Exception e) {
+				System.out.println("⚠️ request log hata: " + e.getMessage());
+			}
+		});
+	}
+
+	private void startNetworkCapture() {
+		if (devTools == null) {
+			System.out.println("⚠️ DevTools yok, network capture başlatılamadı");
+			return;
+		}
+
+		Predicate<String> interestingUrl = url -> {
+			String u = url.toLowerCase(Locale.ROOT);
+			return u.contains("iddaa")
+					|| u.contains("event")
+					|| u.contains("match")
+					|| u.contains("odd")
+					|| u.contains("program")
+					|| u.contains("bet")
+					|| u.contains("sports")
+					|| u.contains("coupon")
+					|| u.contains("graphql");
+		};
+
+		devTools.addListener(Network.responseReceived(), response -> {
+			try {
+				String url = response.getResponse().getUrl();
+				int status = response.getResponse().getStatus().intValue();
+				String mimeType = String.valueOf(response.getResponse().getMimeType());
+
+				if (!interestingUrl.test(url)) {
+					return;
+				}
+
+				System.out.println("🌐 Response: [" + status + "] " + url + " | mime=" + mimeType);
+
+				boolean maybeUseful =
+						mimeType.contains("json")
+								|| mimeType.contains("javascript")
+								|| mimeType.contains("text")
+								|| url.toLowerCase(Locale.ROOT).contains("api")
+								|| url.toLowerCase(Locale.ROOT).contains("graphql");
+
+				if (!maybeUseful) {
+					return;
+				}
+
+				RequestId requestId = response.getRequestId();
+
+				try {
+					Network.GetResponseBodyResponse bodyResponse =
+							devTools.send(Network.getResponseBody(requestId));
+
+					String body = bodyResponse.getBody();
+					if (body == null || body.isBlank()) {
+						return;
+					}
+
+					capturedResponses.put(url, body);
+
+					int no = responseCounter.incrementAndGet();
+					String shortBody = body.length() > 400 ? body.substring(0, 400) : body;
+
+					System.out.println("📦 BODY #" + no + ": " + url);
+					System.out.println(shortBody.replace("\n", " ").replace("\r", " "));
+					saveCapturedResponse(no, url, body);
+
+				} catch (Exception ex) {
+					System.out.println("⚠️ Body alınamadı: " + url + " | " + ex.getMessage());
+				}
+
+			} catch (Exception e) {
+				System.out.println("⚠️ response listener hata: " + e.getMessage());
+			}
+		});
+	}
+
+	private void saveCapturedResponse(int no, String url, String body) {
+		try {
+			Path dir = Path.of("debug-network");
+			Files.createDirectories(dir);
+
+			String safeName = url
+					.replace("https://", "")
+					.replace("http://", "")
+					.replaceAll("[^a-zA-Z0-9._-]", "_");
+
+			if (safeName.length() > 120) {
+				safeName = safeName.substring(0, 120);
+			}
+
+			Path file = dir.resolve(String.format("%03d_%s.txt", no, safeName));
+			String content = "URL:\n" + url + "\n\nBODY:\n" + body;
+			Files.writeString(file, content, StandardCharsets.UTF_8);
+
+			System.out.println("💾 Network response kaydedildi: " + file.toAbsolutePath());
+		} catch (IOException e) {
+			System.out.println("⚠️ Response dosyaya yazılamadı: " + e.getMessage());
+		}
+	}
+
+	private void dumpInterestingCapturedResponses() {
+		System.out.println("=========== CAPTURED RESPONSES ===========");
+		System.out.println("Toplam yakalanan response sayısı: " + capturedResponses.size());
+
+		capturedResponses.forEach((url, body) -> {
+			String preview = body == null ? "" : body.substring(0, Math.min(body.length(), 250))
+					.replace("\n", " ")
+					.replace("\r", " ");
+			System.out.println("URL: " + url);
+			System.out.println("PREVIEW: " + preview);
+			System.out.println("-----------------------------------------");
+		});
+	}
+
+	// =============================================================
+	// GÜNLÜK MAÇLARI ÇEK
 	// =============================================================
 	public List<MatchInfo> fetchMatches() {
 		List<MatchInfo> list = new ArrayList<>();
 		try {
-			String date = LocalDate.now(ZoneId.of("Europe/Istanbul")).format(DateTimeFormatter.ofPattern("dd.MM.yyyy"));
-			String url = "https://www.nesine.com/iddaa?et=1&le=1&dt=" + date;
+			String date = LocalDate.now(ZoneId.of("Europe/Istanbul"))
+					.format(DateTimeFormatter.ofPattern("dd.MM.yyyy"));
+
+			// le=1 kaldırıldı
+			String url = "https://www.nesine.com/iddaa?et=1&dt=" + date;
 
 			System.out.println("🔗 URL açılıyor: " + url);
 			driver.manage().deleteAllCookies();
+
+			startRequestLogging();
+			startNetworkCapture();
+
 			driver.get(url);
 			PageWaitUtils.safeWaitForLoad(driver, 25);
 
-			wait.until(ExpectedConditions.presenceOfElementLocated(By.cssSelector("[data-test-id^='r_']")));
+			Thread.sleep(3000); // ilk request/response'lar düşsün
+
+			wait.until(ExpectedConditions.presenceOfElementLocated(
+					By.cssSelector("[data-test-id^='r_'], a[data-test-id='matchName']")));
+
 			List<Map<String, String>> rawData = scrollAndCollectMatchData();
 			System.out.println("✅ Toplam benzersiz maç: " + rawData.size());
+
+			dumpInterestingCapturedResponses();
 
 			int index = 0;
 			for (Map<String, String> data : rawData) {
@@ -63,10 +250,16 @@ public class MatchScraper {
 					String href = data.getOrDefault("url", "-");
 					String time = data.getOrDefault("time", "-");
 
-					Odds odds = new Odds(toDouble(data.get("ms1")), toDouble(data.get("ms0")),
-							toDouble(data.get("ms2")), toDouble(data.get("ust")), toDouble(data.get("alt")),
-							toDouble(data.get("var")), toDouble(data.get("yok")),
-							Integer.parseInt(data.getOrDefault("mbs", "-1")));
+					Odds odds = new Odds(
+							toDouble(data.get("ms1")),
+							toDouble(data.get("ms0")),
+							toDouble(data.get("ms2")),
+							toDouble(data.get("ust")),
+							toDouble(data.get("alt")),
+							toDouble(data.get("var")),
+							toDouble(data.get("yok")),
+							Integer.parseInt(data.getOrDefault("mbs", "-1"))
+					);
 
 					list.add(new MatchInfo(name, time, href, odds, index++));
 				} catch (Exception e) {
@@ -81,7 +274,7 @@ public class MatchScraper {
 	}
 
 	// =============================================================
-	// MAÇ SATIRLARINI YENİ YAPIYA GÖRE TOPLA
+	// MAÇ SATIRLARINI TOPLA
 	// =============================================================
 	private List<Map<String, String>> scrollAndCollectMatchData() throws InterruptedException {
 		By matchLinkSelector = By.cssSelector("a[data-test-id='matchName']");
@@ -90,7 +283,6 @@ public class MatchScraper {
 
 		int stable = 0;
 		int maxScroll = 180;
-
 		int prevSeen = 0;
 
 		long startTime = System.currentTimeMillis();
@@ -186,8 +378,6 @@ public class MatchScraper {
 				try {
 					WebElement last = currentLinks.get(currentLinks.size() - 1);
 					js.executeScript("arguments[0].scrollIntoView({block:'center'});", last);
-
-					// sanal liste / lazy load için ekstra wheel etkisi
 					last.sendKeys(Keys.PAGE_DOWN);
 				} catch (Exception e) {
 					js.executeScript("arguments[0].scrollTop = arguments[0].scrollTop + 1400;", scrollContainer);
@@ -213,8 +403,7 @@ public class MatchScraper {
 
 	private double toDouble(String s) {
 		try {
-			if (s == null || s.equals("-") || s.isEmpty())
-				return 0.0;
+			if (s == null || s.equals("-") || s.isEmpty()) return 0.0;
 			return Double.parseDouble(s.replace(",", "."));
 		} catch (Exception e) {
 			return 0.0;
@@ -222,7 +411,7 @@ public class MatchScraper {
 	}
 
 	// =============================================================
-	// GEÇMİŞ MAÇLAR (REKABET + SON MAÇLAR)
+	// GEÇMİŞ MAÇLAR
 	// =============================================================
 	public TeamMatchHistory scrapeTeamHistory(String detailUrl, String name) {
 		if (detailUrl == null || !detailUrl.startsWith("http"))
@@ -240,11 +429,8 @@ public class MatchScraper {
 			PageWaitUtils.safeWaitForLoad(driver, 15);
 			Thread.sleep(1000);
 
-			// --- REKABET GEÇMİŞİ ---
-
 			try {
-				List<WebElement> rows = driver
-						.findElements(By.cssSelector("div[data-test-id='CompitionHistoryTableItem']"));
+				List<WebElement> rows = driver.findElements(By.cssSelector("div[data-test-id='CompitionHistoryTableItem']"));
 				System.out.println("🔹 Rekabet geçmişi satır sayısı: " + rows.size());
 
 				for (WebElement r : rows) {
@@ -253,10 +439,8 @@ public class MatchScraper {
 								"[data-test-id='CompitionTableItemSeason'], [data-test-id='TableBodyDate']");
 						String league = safeText(r,
 								"[data-test-id='CompitionTableItemLeague'], [data-test-id='TableBodyTournament']");
-						String homeTeam = extractTeamName(
-								r.findElement(By.cssSelector("div[data-test-id='HomeTeam']")));
-						String awayTeam = extractTeamName(
-								r.findElement(By.cssSelector("div[data-test-id='AwayTeam']")));
+						String homeTeam = extractTeamName(r.findElement(By.cssSelector("div[data-test-id='HomeTeam']")));
+						String awayTeam = extractTeamName(r.findElement(By.cssSelector("div[data-test-id='AwayTeam']")));
 						String score = extractScore(r);
 						int[] sc = parseScore(score);
 
@@ -270,14 +454,12 @@ public class MatchScraper {
 				System.out.println("extractCompetitionHistoryResults hata: " + e.getMessage());
 			}
 
-			// --- SON MAÇLAR (Ev / Dep) ---
 			try {
 				List<WebElement> tables = driver.findElements(By.cssSelector("div[data-test-id^='LastMatchesTable']"));
 				for (WebElement table : tables) {
 					int currentSide = 0;
 					try {
-						WebElement titleEl = table
-								.findElement(By.cssSelector("h3, [data-test-id='LastMatchesTableTitle']"));
+						WebElement titleEl = table.findElement(By.cssSelector("h3, [data-test-id='LastMatchesTableTitle']"));
 						String titleText = titleEl.getText().toLowerCase(Locale.ROOT);
 						if (titleText.contains("ev") || titleText.contains("home"))
 							currentSide = 1;
@@ -290,24 +472,18 @@ public class MatchScraper {
 					List<WebElement> rows = table.findElements(By.cssSelector("tbody tr"));
 					for (WebElement r : rows) {
 						try {
-							// 🔹 Lig ve tarih aynı hücrede (ör: V-L / 31 Eki)
 							String league = "-";
 							String date = "-";
 							try {
-								WebElement leagueTd = r
-										.findElement(By.cssSelector("td[data-test-id='TableBodyLeague']"));
+								WebElement leagueTd = r.findElement(By.cssSelector("td[data-test-id='TableBodyLeague']"));
 								List<WebElement> spans = leagueTd.findElements(By.tagName("span"));
-								if (spans.size() >= 1)
-									league = spans.get(0).getText().trim();
-								if (spans.size() >= 2)
-									date = spans.get(1).getText().trim();
+								if (spans.size() >= 1) league = spans.get(0).getText().trim();
+								if (spans.size() >= 2) date = spans.get(1).getText().trim();
 							} catch (Exception ignore) {
 							}
 
-							String homeTeam = extractTeamName(
-									r.findElement(By.cssSelector("div[data-test-id='HomeTeam']")));
-							String awayTeam = extractTeamName(
-									r.findElement(By.cssSelector("div[data-test-id='AwayTeam']")));
+							String homeTeam = extractTeamName(r.findElement(By.cssSelector("div[data-test-id='HomeTeam']")));
+							String awayTeam = extractTeamName(r.findElement(By.cssSelector("div[data-test-id='AwayTeam']")));
 							String score = extractScore(r);
 							int[] sc = parseScore(score);
 
@@ -333,29 +509,22 @@ public class MatchScraper {
 
 	private String extractScore(WebElement row) {
 		try {
-			// 1) Öncelikle normal tablo skor alanlarını ara
-			List<WebElement> direct = row
-					.findElements(By.cssSelector("[data-test-id='Score'] span, td[data-test-id='Score']"));
+			List<WebElement> direct = row.findElements(By.cssSelector("[data-test-id='Score'] span, td[data-test-id='Score']"));
 			for (WebElement s : direct) {
 				String t = s.getText().trim().replaceAll("\\(.*?\\)", "");
-				if (t.matches("\\d+\\s*-\\s*\\d+"))
-					return t;
+				if (t.matches("\\d+\\s*-\\s*\\d+")) return t;
 			}
 
-			// 2) Eğer bulunamadıysa, buton veya tooltip içindeki skorları ara
 			List<WebElement> buttons = row.findElements(By.cssSelector("button[data-test-id='NsnButton'] span"));
 			for (WebElement b : buttons) {
 				String t = b.getText().trim().replaceAll("\\(.*?\\)", "");
-				if (t.matches("\\d+\\s*-\\s*\\d+"))
-					return t;
+				if (t.matches("\\d+\\s*-\\s*\\d+")) return t;
 			}
 
-			// 3) Alternatif: direkt <span> içinde "X-Y" formu
 			List<WebElement> spans = row.findElements(By.cssSelector("span"));
 			for (WebElement s : spans) {
 				String t = s.getText().trim().replaceAll("\\(.*?\\)", "");
-				if (t.matches("\\d+\\s*-\\s*\\d+"))
-					return t;
+				if (t.matches("\\d+\\s*-\\s*\\d+")) return t;
 			}
 		} catch (Exception e) {
 			// ignore
@@ -366,9 +535,9 @@ public class MatchScraper {
 	private int[] parseScore(String s) {
 		try {
 			String[] p = s.split("-");
-			return new int[] { Integer.parseInt(p[0].trim()), Integer.parseInt(p[1].trim()) };
+			return new int[]{Integer.parseInt(p[0].trim()), Integer.parseInt(p[1].trim())};
 		} catch (Exception e) {
-			return new int[] { -1, -1 };
+			return new int[]{-1, -1};
 		}
 	}
 
@@ -377,12 +546,11 @@ public class MatchScraper {
 		try {
 			driver.get(url);
 			PageWaitUtils.waitForPageLoad(driver, 12);
-			wait.until(
-					ExpectedConditions.visibilityOfElementLocated(By.cssSelector("div[data-test-id='HeaderTeams']")));
+			wait.until(ExpectedConditions.visibilityOfElementLocated(By.cssSelector("div[data-test-id='HeaderTeams']")));
 
 			WebElement header = driver.findElement(By.cssSelector("div[data-test-id='HeaderTeams']"));
-			List<WebElement> teams = header
-					.findElements(By.cssSelector("a[data-test-id='TeamLink'] span[data-test-id='HeaderTeams']"));
+			List<WebElement> teams = header.findElements(
+					By.cssSelector("a[data-test-id='TeamLink'] span[data-test-id='HeaderTeams']"));
 
 			if (teams.size() >= 2) {
 				home = teams.get(0).getText().trim();
@@ -392,7 +560,7 @@ public class MatchScraper {
 			System.out.println("Takım adları çekilemedi: " + e.getMessage());
 		}
 		name = home + " - " + away;
-		return new String[] { home, away, name };
+		return new String[]{home, away, name};
 	}
 
 	private String extractTeamName(WebElement el) {
@@ -422,24 +590,29 @@ public class MatchScraper {
 
 	private WebElement findScrollableContainer() {
 		List<By> candidates = Arrays.asList(
-			By.cssSelector("div[class*='scroll']"),
-			By.cssSelector("div[class*='content']"),
-			By.cssSelector("main"),
-			By.cssSelector("body")
+				By.cssSelector("div[class*='scroll']"),
+				By.cssSelector("div[class*='content']"),
+				By.cssSelector("main"),
+				By.cssSelector("body")
 		);
 
 		for (By by : candidates) {
 			try {
 				List<WebElement> els = driver.findElements(by);
 				for (WebElement el : els) {
-					Long sh = (Long) js.executeScript("return arguments[0].scrollHeight;", el);
-					Long ch = (Long) js.executeScript("return arguments[0].clientHeight;", el);
-					if (sh != null && ch != null && sh > ch + 200) {
+					Object shObj = js.executeScript("return arguments[0].scrollHeight;", el);
+					Object chObj = js.executeScript("return arguments[0].clientHeight;", el);
+
+					long sh = shObj instanceof Number ? ((Number) shObj).longValue() : -1L;
+					long ch = chObj instanceof Number ? ((Number) chObj).longValue() : -1L;
+
+					if (sh > ch + 200) {
 						System.out.println("✅ Scroll container bulundu: " + by);
 						return el;
 					}
 				}
-			} catch (Exception ignore) {}
+			} catch (Exception ignore) {
+			}
 		}
 
 		System.out.println("⚠️ Özel scroll container bulunamadı, body kullanılacak");
@@ -448,10 +621,10 @@ public class MatchScraper {
 
 	private void clickLoadMoreIfExists() {
 		List<By> buttons = Arrays.asList(
-			By.xpath("//button[contains(., 'Daha Fazla')]"),
-			By.xpath("//button[contains(., 'Daha fazla')]"),
-			By.xpath("//button[contains(., 'Tümünü Göster')]"),
-			By.cssSelector("button[data-test-id*='load'], button[data-testid*='load']")
+				By.xpath("//button[contains(., 'Daha Fazla')]"),
+				By.xpath("//button[contains(., 'Daha fazla')]"),
+				By.xpath("//button[contains(., 'Tümünü Göster')]"),
+				By.cssSelector("button[data-test-id*='load'], button[data-testid*='load']")
 		);
 
 		for (By by : buttons) {
@@ -465,7 +638,8 @@ public class MatchScraper {
 						return;
 					}
 				}
-			} catch (Exception ignore) {}
+			} catch (Exception ignore) {
+			}
 		}
 	}
 
@@ -497,7 +671,8 @@ public class MatchScraper {
 			if (val instanceof Number) {
 				return ((Number) val).longValue();
 			}
-		} catch (Exception ignore) {}
+		} catch (Exception ignore) {
+		}
 		return -1;
 	}
 
@@ -521,18 +696,18 @@ public class MatchScraper {
 			return matchLink;
 		}
 	}
+
 	private void debugSelectorCounts() {
-    System.out.println("DEBUG row[data-sport-id=1]: " +
-            driver.findElements(By.cssSelector("div[data-test-id^='r_'][data-sport-id='1']")).size());
+		System.out.println("DEBUG row[data-sport-id=1]: " +
+				driver.findElements(By.cssSelector("div[data-test-id^='r_'][data-sport-id='1']")).size());
 
-    System.out.println("DEBUG any row[data-test-id^=r_]: " +
-            driver.findElements(By.cssSelector("[data-test-id^='r_']")).size());
+		System.out.println("DEBUG any row[data-test-id^=r_]: " +
+				driver.findElements(By.cssSelector("[data-test-id^='r_']")).size());
 
-    System.out.println("DEBUG matchName links: " +
-            driver.findElements(By.cssSelector("a[data-test-id='matchName']")).size());
+		System.out.println("DEBUG matchName links: " +
+				driver.findElements(By.cssSelector("a[data-test-id='matchName']")).size());
 
-    System.out.println("DEBUG all matchName elems: " +
-            driver.findElements(By.cssSelector("[data-test-id='matchName']")).size());
+		System.out.println("DEBUG all matchName elems: " +
+				driver.findElements(By.cssSelector("[data-test-id='matchName']")).size());
+	}
 }
-}
-
