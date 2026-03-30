@@ -34,23 +34,20 @@ public class Application {
 	public static void main(String[] args) throws IOException {
 		ZoneId istanbulZone = ZoneId.of("Europe/Istanbul");
 
-		// 🔹 Argüman kontrolü
 		String mode = args.length > 0 ? args[0].toLowerCase() : "futbol";
 		System.out.println("Çalışma modu: " + mode.toUpperCase());
 
 		switch (mode) {
-		case "futbol":
-			runFutbolPrediction();
-			break;
-
-		case "kontrol":
-			runKontrol();
-			break;
-
-		default:
-			System.out.println("⚠️ Geçersiz argüman: " + mode);
-			System.out.println("Kullanım: java -jar prediction.jar [futbol | kontrol]");
-			break;
+			case "futbol":
+				runFutbolPrediction();
+				break;
+			case "kontrol":
+				runKontrol();
+				break;
+			default:
+				System.out.println("⚠️ Geçersiz argüman: " + mode);
+				System.out.println("Kullanım: java -jar prediction.jar [futbol | kontrol]");
+				break;
 		}
 
 		System.out.println("\nTamamlandı: " + LocalDateTime.now(istanbulZone));
@@ -60,7 +57,7 @@ public class Application {
 		MatchScraper scraper = null;
 		MatchHistoryManager historyManager = new MatchHistoryManager();
 		List<MatchInfo> matches = null;
-		List<Match> matchStats = new ArrayList<Match>();
+		List<Match> matchStats = new ArrayList<>();
 		ZoneId istanbulZone = ZoneId.of("Europe/Istanbul");
 		List<PredictionResult> results = new ArrayList<>();
 
@@ -68,10 +65,8 @@ public class Application {
 			System.out.println("=== İddaa Scraper Başlatılıyor ===");
 			System.out.println("Zaman: " + LocalDateTime.now(istanbulZone));
 
-			// Scraper'ı başlat
 			scraper = new MatchScraper();
 
-			// Ana sayfa verilerini çek
 			System.out.println("\n1. Ana sayfa maçları çekiliyor...");
 			matches = scraper.fetchMatches();
 
@@ -79,34 +74,37 @@ public class Application {
 
 			for (int i = 0; i < matches.size(); i++) {
 				MatchInfo match = matches.get(i);
+				TeamMatchHistory teamHistory = null;
 
-				// Detay URL'si varsa geçmiş verilerini çek
 				if (match.hasDetailUrl()) {
 					System.out.println("Geçmiş çekiliyor " + (i + 1) + "/" + matches.size() + ": " + match.getName());
 
 					try {
 						String url = match.getDetailUrl();
-						if (url == null || !url.startsWith("http")) {
-							System.out.println("⚠️ Geçersiz URL: " + url);
-							continue;
-						}
-
-						TeamMatchHistory teamHistory = scraper.scrapeTeamHistory(match.getDetailUrl(), match.getName());
-
-						if (teamHistory != null) {
-							historyManager.addTeamHistory(teamHistory);
-							matchStats.add(teamHistory.createMatch(match));
+						if (url != null && url.startsWith("http")) {
+							teamHistory = scraper.scrapeTeamHistory(match.getDetailUrl(), match.getName());
 						} else {
-							System.out.println("⚠️ Veri yok veya boş döndü: " + match.getName());
+							System.out.println("⚠️ Geçersiz URL: " + url);
 						}
 
 						Thread.sleep(1500);
-						if ((i + 1) % 5 == 0)
-							System.gc();
+						if ((i + 1) % 5 == 0) System.gc();
 
 					} catch (Exception e) {
 						System.out.println("Geçmiş çekme hatası: " + e.getMessage());
 					}
+				}
+
+				if (teamHistory == null) {
+					teamHistory = new TeamMatchHistory(match.getName(), "-", "-", match.getDetailUrl());
+				}
+
+				historyManager.addTeamHistory(teamHistory);
+
+				try {
+					matchStats.add(teamHistory.createMatch(match));
+				} catch (Exception e) {
+					System.out.println("⚠️ Match oluşturulamadı: " + match.getName() + " | " + e.getMessage());
 				}
 
 				if ((i + 1) % 20 == 0) {
@@ -123,12 +121,25 @@ public class Application {
 				results.add(ensemble.predict(m, Optional.ofNullable(m.getOdds())));
 			}
 
+			System.out.println("MATCHES SIZE = " + matches.size());
+			System.out.println("HISTORY SIZE = " + historyManager.getTeamHistories().size());
+			System.out.println("MATCHSTATS SIZE = " + matchStats.size());
+			System.out.println("RESULTS SIZE = " + results.size());
+
 			LastPredictionManager lastPredictionManager = new LastPredictionManager(historyManager, results, matches);
 			lastPredictionManager.fillPredictions();
 
-			CombinedHtmlReportGenerator.generateCombinedHtml(lastPredictionManager.getLastPrediction(), matches,
-					historyManager, matchStats, results, lastPredictionManager.getPredictionData(), "futbol.html",
-					getStringDay(false), null);
+			CombinedHtmlReportGenerator.generateCombinedHtml(
+					lastPredictionManager.getLastPrediction(),
+					matches,
+					historyManager,
+					matchStats,
+					results,
+					lastPredictionManager.getPredictionData(),
+					"futbol.html",
+					getStringDay(false),
+					null
+			);
 			System.out.println("futbol.html oluşturuldu.");
 
 			JsonStorage.save("futbol", "PredictionData", getStringDay(false), lastPredictionManager.getPredictionData());
@@ -151,51 +162,46 @@ public class Application {
 	private static void runKontrol() throws IOException {
 		ControlScraper scraper = null;
 		MatchHistoryManager historyManager = new MatchHistoryManager();
-		List<MatchInfo> matches = JsonReader.readFromGithub("futbol", "MatchInfo", JsonReader.getToday(),
-				MatchInfo.class);
+
+		List<MatchInfo> matches = JsonReader.readFromGithub("futbol", "MatchInfo", JsonReader.getToday(), MatchInfo.class);
 		List<Match> matchStats = JsonReader.readFromGithub("futbol", "Match", JsonReader.getToday(), Match.class);
 		ZoneId istanbulZone = ZoneId.of("Europe/Istanbul");
-		List<PredictionResult> results = JsonReader.readFromGithub("futbol", "PredictionResult", JsonReader.getToday(),
-				PredictionResult.class);
-
-		List<TeamMatchHistory> teamHistoryList = JsonReader.readFromGithub("futbol", "TeamMatchHistory",
-				JsonReader.getToday(), TeamMatchHistory.class);
-
-		List<RealScores> rsList = JsonReader.readFromGithub("futbol", "RealScores", JsonReader.getToday(),
-				RealScores.class);
+		List<PredictionResult> results = JsonReader.readFromGithub("futbol", "PredictionResult", JsonReader.getToday(), PredictionResult.class);
+		List<TeamMatchHistory> teamHistoryList = JsonReader.readFromGithub("futbol", "TeamMatchHistory", JsonReader.getToday(), TeamMatchHistory.class);
+		List<RealScores> rsList = JsonReader.readFromGithub("futbol", "RealScores", JsonReader.getToday(), RealScores.class);
 
 		try {
 			System.out.println("Zaman: " + LocalDateTime.now(istanbulZone));
-
-			// Scraper'ı başlat
 			scraper = new ControlScraper();
 
 			Map<String, String> updatedScores = scraper.fetchFinishedScores(rsList);
-
 			List<PredictionData> predictions = PredictionUpdater.updateFromGithub(updatedScores, "PredictionData-");
 
 			for (int i = 0; i < matches.size(); i++) {
-				MatchInfo match = matches.get(i);
-
-				// Detay URL'si varsa geçmiş verilerini çek
-				if (match.hasDetailUrl()) {
-					System.out.println("Geçmiş çekiliyor " + (i + 1) + "/" + matches.size() + ": " + match.getName());
-
+				if (i < teamHistoryList.size()) {
 					historyManager.addTeamHistory(teamHistoryList.get(i));
-
+				} else {
+					MatchInfo match = matches.get(i);
+					historyManager.addTeamHistory(new TeamMatchHistory(match.getName(), "-", "-", match.getDetailUrl()));
 				}
 			}
 
 			LastPredictionManager lastPredictionManager = new LastPredictionManager(historyManager, results, matches);
 			lastPredictionManager.fillPredictions();
 
-			CombinedHtmlReportGenerator.generateCombinedHtml(lastPredictionManager.getLastPrediction(), matches,
-					historyManager, matchStats, results, predictions, "futbol.html", getStringDay(true),
-					scraper.getResults());
+			CombinedHtmlReportGenerator.generateCombinedHtml(
+					lastPredictionManager.getLastPrediction(),
+					matches,
+					historyManager,
+					matchStats,
+					results,
+					predictions,
+					"futbol.html",
+					getStringDay(true),
+					scraper.getResults()
+			);
 			System.out.println("futbol.html oluşturuldu.");
 
-			// JsonStorage.save("futbol", "PredictionData",
-			// lastPredictionManager.getPredictionData());
 			JsonStorage.save("futbol", "RealScores", JsonReader.getToday(), scraper.getResults());
 
 		} catch (Exception e) {
