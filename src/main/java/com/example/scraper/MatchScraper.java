@@ -5,48 +5,23 @@ import com.example.model.MatchInfo;
 import com.example.model.MatchResult;
 import com.example.model.Odds;
 import com.example.model.TeamMatchHistory;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.openqa.selenium.*;
 import org.openqa.selenium.chrome.ChromeDriver;
 import org.openqa.selenium.chrome.ChromeOptions;
-import org.openqa.selenium.devtools.DevTools;
-import org.openqa.selenium.devtools.HasDevTools;
-import org.openqa.selenium.devtools.v118.network.Network;
-import org.openqa.selenium.devtools.v118.network.model.RequestId;
 import org.openqa.selenium.support.ui.ExpectedConditions;
 import org.openqa.selenium.support.ui.WebDriverWait;
 
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.time.Duration;
 import java.time.LocalDate;
-import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.function.Predicate;
 
 public class MatchScraper {
 
     private WebDriver driver;
     private JavascriptExecutor js;
     private WebDriverWait wait;
-
-    private DevTools devTools;
-    private final AtomicBoolean networkListenersAttached = new AtomicBoolean(false);
-
-    private final Map<String, String> capturedResponses = new ConcurrentHashMap<>();
-    private final List<String> capturedMatchJsonBodies = Collections.synchronizedList(new ArrayList<>());
-    private final Set<String> capturedMatchJsonHashes = Collections.synchronizedSet(new HashSet<>());
-    private final AtomicInteger responseCounter = new AtomicInteger(0);
-
-    private final ObjectMapper objectMapper = new ObjectMapper();
 
     public MatchScraper() {
         setupDriver();
@@ -71,212 +46,6 @@ public class MatchScraper {
         driver = chromeDriver;
         js = (JavascriptExecutor) driver;
         wait = new WebDriverWait(driver, Duration.ofSeconds(20));
-
-        try {
-            devTools = ((HasDevTools) chromeDriver).getDevTools();
-            devTools.createSession();
-            devTools.send(Network.enable(Optional.empty(), Optional.empty(), Optional.empty()));
-            System.out.println("✅ DevTools Network aktif");
-        } catch (Exception e) {
-            System.out.println("⚠️ DevTools başlatılamadı: " + e.getMessage());
-        }
-    }
-
-    // =============================================================
-    // NETWORK CAPTURE
-    // =============================================================
-    private void ensureNetworkCaptureStarted() {
-        if (devTools == null) {
-            System.out.println("⚠️ DevTools yok, network capture başlatılamadı");
-            return;
-        }
-
-        if (networkListenersAttached.getAndSet(true)) {
-            return;
-        }
-
-        startRequestLogging();
-        startNetworkCapture();
-    }
-
-    private void startRequestLogging() {
-        devTools.addListener(Network.requestWillBeSent(), req -> {
-            try {
-                String url = req.getRequest().getUrl();
-                String u = url.toLowerCase(Locale.ROOT);
-
-                if (isInterestingUrl(u)) {
-                    System.out.println("➡️ Request: " + req.getRequest().getMethod() + " " + url);
-                }
-            } catch (Exception e) {
-                System.out.println("⚠️ request log hata: " + e.getMessage());
-            }
-        });
-    }
-
-    private void startNetworkCapture() {
-        Predicate<String> interestingUrl = url -> isInterestingUrl(url.toLowerCase(Locale.ROOT));
-
-        devTools.addListener(Network.responseReceived(), response -> {
-            try {
-                String url = response.getResponse().getUrl();
-                String lowerUrl = url.toLowerCase(Locale.ROOT);
-                int status = response.getResponse().getStatus().intValue();
-                String mimeType = String.valueOf(response.getResponse().getMimeType());
-
-                if (!interestingUrl.test(url)) {
-                    return;
-                }
-
-                System.out.println("🌐 Response: [" + status + "] " + url + " | mime=" + mimeType);
-
-                boolean maybeUseful =
-                        mimeType.contains("json")
-                                || mimeType.contains("javascript")
-                                || mimeType.contains("text")
-                                || lowerUrl.contains("api")
-                                || lowerUrl.contains("graphql")
-                                || lowerUrl.contains("bulten")
-                                || lowerUrl.contains("ls.nesine.com");
-
-                if (!maybeUseful) {
-                    return;
-                }
-
-                String body = getResponseBodyWithRetry(response.getRequestId(), url);
-                if (body == null || body.isBlank()) {
-                    return;
-                }
-
-                capturedResponses.put(url, body);
-
-                int no = responseCounter.incrementAndGet();
-                String shortBody = body.length() > 400 ? body.substring(0, 400) : body;
-
-                System.out.println("📦 BODY #" + no + ": " + url);
-                System.out.println(shortBody.replace("\n", " ").replace("\r", " "));
-
-                if (shouldPersistResponse(url, body)) {
-                    saveCapturedResponse(no, url, body);
-                }
-
-                if (looksLikeMatchJson(url, body)) {
-                    String hash = Integer.toHexString(body.hashCode());
-                    if (capturedMatchJsonHashes.add(hash)) {
-                        capturedMatchJsonBodies.add(body);
-                        System.out.println("🔥 Match JSON adayı yakalandı: " + url);
-                    }
-                }
-
-            } catch (Exception e) {
-                System.out.println("⚠️ response listener hata: " + e.getMessage());
-            }
-        });
-    }
-
-    private boolean isInterestingUrl(String u) {
-        return u.contains("iddaa")
-                || u.contains("event")
-                || u.contains("match")
-                || u.contains("odd")
-                || u.contains("program")
-                || u.contains("bet")
-                || u.contains("sports")
-                || u.contains("coupon")
-                || u.contains("graphql")
-                || u.contains("bulten.nesine.com")
-                || u.contains("ls.nesine.com")
-                || u.contains("livescore");
-    }
-
-    private boolean shouldPersistResponse(String url, String body) {
-        String u = url.toLowerCase(Locale.ROOT);
-        return looksLikeMatchJson(url, body)
-                || u.contains("getsporteventcounts")
-                || u.contains("getprebultendelta")
-                || u.contains("getlivebultenv3")
-                || u.contains("getchangedodds")
-                || u.contains("getlivebetresultswithversion");
-    }
-
-    private String getResponseBodyWithRetry(RequestId requestId, String url) {
-        for (int i = 0; i < 4; i++) {
-            try {
-                if (i > 0) {
-                    Thread.sleep(600L * i);
-                }
-                Network.GetResponseBodyResponse bodyResponse =
-                        devTools.send(Network.getResponseBody(requestId));
-                String body = bodyResponse.getBody();
-                if (body != null && !body.isBlank()) {
-                    return body;
-                }
-            } catch (Exception ex) {
-                if (i == 3) {
-                    System.out.println("⚠️ Body alınamadı: " + url + " | " + ex.getMessage());
-                }
-            }
-        }
-        return null;
-    }
-
-    private boolean looksLikeMatchJson(String url, String body) {
-        String u = url.toLowerCase(Locale.ROOT);
-        if (!(u.contains("bulten") || u.contains("bet") || u.contains("live") || u.contains("event") || u.contains("ls.nesine.com"))) {
-            return false;
-        }
-
-        String b = body == null ? "" : body;
-        return (b.contains("\"MID\"") && b.contains("\"matchDate\""))
-                || (b.contains("\"d\"") && b.contains("\"MID\""))
-                || (b.contains("\"N\"") && b.contains("\"DT\""))
-                || (b.contains("\"HT\"") && b.contains("\"AT\""))
-                || (b.contains("\"HomeTeamName\"") && b.contains("\"AwayTeamName\""));
-    }
-
-    private void saveCapturedResponse(int no, String url, String body) {
-        try {
-            Path dir = Path.of("debug-network");
-            Files.createDirectories(dir);
-
-            String safeName = url
-                    .replace("https://", "")
-                    .replace("http://", "")
-                    .replaceAll("[^a-zA-Z0-9._-]", "_");
-
-            if (safeName.length() > 120) {
-                safeName = safeName.substring(0, 120);
-            }
-
-            Path file = dir.resolve(String.format("%03d_%s.txt", no, safeName));
-            String content = "URL:\n" + url + "\n\nBODY:\n" + body;
-            Files.writeString(file, content, StandardCharsets.UTF_8);
-
-            System.out.println("💾 Network response kaydedildi: " + file.toAbsolutePath());
-        } catch (IOException e) {
-            System.out.println("⚠️ Response dosyaya yazılamadı: " + e.getMessage());
-        }
-    }
-
-    private void dumpInterestingCapturedResponses() {
-        System.out.println("=========== CAPTURED RESPONSES ===========");
-        System.out.println("Toplam yakalanan response sayısı: " + capturedResponses.size());
-
-        capturedResponses.forEach((url, body) -> {
-            String preview = body == null ? "" : body.substring(0, Math.min(body.length(), 250))
-                    .replace("\n", " ")
-                    .replace("\r", " ");
-            System.out.println("URL: " + url);
-            System.out.println("PREVIEW: " + preview);
-            System.out.println("-----------------------------------------");
-        });
-    }
-
-    private void resetCapturedState() {
-        capturedResponses.clear();
-        capturedMatchJsonBodies.clear();
-        capturedMatchJsonHashes.clear();
-        responseCounter.set(0);
     }
 
     // =============================================================
@@ -285,12 +54,10 @@ public class MatchScraper {
     public List<MatchInfo> fetchMatches() {
         List<MatchInfo> list = new ArrayList<>();
         try {
-            resetCapturedState();
-            ensureNetworkCaptureStarted();
-
             String date = LocalDate.now(ZoneId.of("Europe/Istanbul"))
                     .format(DateTimeFormatter.ofPattern("dd.MM.yyyy"));
 
+            // le=1 KORUNDU
             String url = "https://www.nesine.com/iddaa?et=1&le=1&dt=" + date;
 
             System.out.println("🔗 URL açılıyor: " + url);
@@ -301,25 +68,14 @@ public class MatchScraper {
             wait.until(ExpectedConditions.presenceOfElementLocated(
                     By.cssSelector("[data-test-id^='r_'], a[data-test-id='matchName']")));
 
-            waitForNetworkData(7000);
+            expandAllSectionsIfPossible();
 
-            List<Map<String, String>> jsonMatches = collectMatchesFromCapturedJson();
-            List<Map<String, String>> finalMatches;
+            List<Map<String, String>> rawData = scrollAndCollectMatchData();
 
-            if (jsonMatches.size() >= 20) {
-                System.out.println("✅ JSON'dan yeterli maç geldi: " + jsonMatches.size());
-                finalMatches = enrichJsonMatchesWithDom(jsonMatches);
-            } else {
-                System.out.println("⚠️ JSON yetersiz (" + jsonMatches.size() + "), DOM fallback devreye giriyor...");
-                List<Map<String, String>> domMatches = scrollAndCollectMatchData();
-                finalMatches = mergeMatchLists(jsonMatches, domMatches);
-            }
-
-            System.out.println("✅ Toplam benzersiz maç: " + finalMatches.size());
-            //dumpInterestingCapturedResponses();
+            System.out.println("✅ Toplam benzersiz maç: " + rawData.size());
 
             int index = 0;
-            for (Map<String, String> data : finalMatches) {
+            for (Map<String, String> data : rawData) {
                 try {
                     String name = data.getOrDefault("name", "-");
                     String href = data.getOrDefault("url", "-");
@@ -348,323 +104,6 @@ public class MatchScraper {
         return list;
     }
 
-    private void waitForNetworkData(long timeoutMs) {
-        long end = System.currentTimeMillis() + timeoutMs;
-        int prev = -1;
-        int stable = 0;
-
-        while (System.currentTimeMillis() < end) {
-            int current = capturedMatchJsonBodies.size();
-            if (current == prev) {
-                stable++;
-            } else {
-                stable = 0;
-            }
-            prev = current;
-
-            if (current > 0 && stable >= 4) {
-                break;
-            }
-
-            try {
-                Thread.sleep(500);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                return;
-            }
-        }
-
-        System.out.println("🧠 Yakalanan match JSON body sayısı: " + capturedMatchJsonBodies.size());
-    }
-
-    // =============================================================
-    // JSON MATCH COLLECTOR
-    // =============================================================
-    private List<Map<String, String>> collectMatchesFromCapturedJson() {
-        Map<String, Map<String, String>> merged = new LinkedHashMap<>();
-
-        for (String body : capturedMatchJsonBodies) {
-            try {
-                JsonNode root = objectMapper.readTree(body);
-                JsonNode dataNode = root.path("d");
-
-                if (!dataNode.isArray()) {
-                    continue;
-                }
-
-                for (JsonNode item : dataNode) {
-                    try {
-                        String leagueOrType = firstNonBlank(
-                                text(item, "TT"),
-                                text(item, "LN"),
-                                text(item, "LeagueName"),
-                                text(item, "CN")
-                        );
-
-                        String lowerLeague = leagueOrType.toLowerCase(Locale.ROOT);
-                        if (lowerLeague.contains("esoccer")
-                                || lowerLeague.contains("ebasketball")
-                                || lowerLeague.contains("esports")) {
-                            continue;
-                        }
-
-                        String sportType = text(item, "T");
-                        String name = extractMatchName(item);
-
-                        if (name.isBlank() || "-".equals(name) || !name.contains(" - ")) {
-                            continue;
-                        }
-
-                        if (!isLikelyFootball(item, sportType, name, leagueOrType)) {
-                            continue;
-                        }
-
-                        String time = firstNonBlank(
-                                text(item, "DT"),
-                                text(item, "MD"),
-                                text(item, "matchDate"),
-                                "-"
-                        );
-
-                        String mid = firstNonBlank(
-                                text(item, "MID"),
-                                text(item, "BID"),
-                                text(item, "C"),
-                                UUID.randomUUID().toString()
-                        );
-
-                        String url = buildSyntheticUrl(item, mid);
-
-                        Map<String, String> map = new HashMap<>();
-                        map.put("name", name);
-                        map.put("time", normalizeTime(time));
-                        map.put("url", url);
-                        map.put("mbs", extractMbs(item));
-
-                        map.put("ms1", extractOdd(item, "1", "MS1"));
-                        map.put("ms0", extractOdd(item, "X", "MSX"));
-                        map.put("ms2", extractOdd(item, "2", "MS2"));
-                        map.put("alt", extractOdd(item, "ALT", "ALT"));
-                        map.put("ust", extractOdd(item, "ÜST", "UST"));
-                        map.put("var", extractOdd(item, "VAR", "VAR"));
-                        map.put("yok", extractOdd(item, "YOK", "YOK"));
-
-                        merged.putIfAbsent(mid, map);
-
-                    } catch (Exception ex) {
-                        System.out.println("⚠️ JSON item parse edilemedi: " + ex.getMessage());
-                    }
-                }
-            } catch (Exception e) {
-                System.out.println("⚠️ JSON body parse edilemedi: " + e.getMessage());
-            }
-        }
-
-        System.out.println("🧠 JSON'dan çıkan maç sayısı: " + merged.size());
-        return new ArrayList<>(merged.values());
-    }
-
-    private String text(JsonNode node, String field) {
-        JsonNode v = node.path(field);
-        if (v.isMissingNode() || v.isNull()) return "";
-        return v.asText("").trim();
-    }
-
-    private String firstNonBlank(String... vals) {
-        for (String v : vals) {
-            if (v != null && !v.isBlank()) return v;
-        }
-        return "";
-    }
-
-    private boolean isLikelyFootball(JsonNode item, String sportType, String name, String leagueOrType) {
-        if ("1".equals(sportType)) return true;
-
-        String league = leagueOrType == null ? "" : leagueOrType.toLowerCase(Locale.ROOT);
-
-        if (league.contains("football")
-                || league.contains("futbol")
-                || league.contains("u21")
-                || league.contains("u19")
-                || league.contains("kadın")
-                || league.contains("women")
-                || league.contains("hazırlık")
-                || league.contains("friendly")
-                || league.contains("cup")
-                || league.contains("league")) {
-            return true;
-        }
-
-        return name.contains(" - ");
-    }
-
-    private String extractMatchName(JsonNode item) {
-        String n = text(item, "N");
-        if (!n.isBlank()) return n;
-
-        String home = firstNonBlank(
-                text(item, "HT"),
-                text(item, "HomeTeamName"),
-                text(item, "HN")
-        );
-        String away = firstNonBlank(
-                text(item, "AT"),
-                text(item, "AwayTeamName"),
-                text(item, "AN")
-        );
-
-        if (!home.isBlank() && !away.isBlank()) {
-            return home + " - " + away;
-        }
-
-        JsonNode teams = item.path("TE");
-        if (teams.isArray() && teams.size() >= 2) {
-            String t1 = teams.get(0).asText("").trim();
-            String t2 = teams.get(1).asText("").trim();
-            if (!t1.isBlank() && !t2.isBlank()) {
-                return t1 + " - " + t2;
-            }
-        }
-
-        return "-";
-    }
-
-    private String normalizeTime(String raw) {
-        if (raw == null || raw.isBlank()) return "-";
-
-        try {
-            if (raw.contains("T")) {
-                OffsetDateTime odt = OffsetDateTime.parse(raw);
-                return odt.toLocalTime().format(DateTimeFormatter.ofPattern("HH:mm"));
-            }
-        } catch (Exception ignore) {
-        }
-
-        if (raw.matches("\\d{1,2}:\\d{2}")) {
-            return raw;
-        }
-
-        return raw;
-    }
-
-    private String extractMbs(JsonNode item) {
-        return firstNonBlank(
-                text(item, "MBS"),
-                text(item, "Mbs"),
-                "-1"
-        );
-    }
-
-    private String buildSyntheticUrl(JsonNode item, String mid) {
-        String detail = firstNonBlank(
-                text(item, "DetailUrl"),
-                text(item, "U"),
-                text(item, "Url")
-        );
-
-        if (!detail.isBlank()) {
-            if (detail.startsWith("http")) {
-                return detail;
-            }
-            if (detail.startsWith("/")) {
-                return "https://www.nesine.com" + detail;
-            }
-        }
-
-        return "nesine://match/" + mid;
-    }
-
-    private String extractOdd(JsonNode item, String containsKey, String fallbackLabel) {
-        JsonNode odds = item.path("O");
-        if (odds.isArray()) {
-            for (JsonNode odd : odds) {
-                String n = firstNonBlank(text(odd, "N"), text(odd, "Name"), text(odd, "OCN")).toUpperCase(Locale.ROOT);
-                String v = firstNonBlank(text(odd, "V"), text(odd, "Value"), text(odd, "O")).replace(",", ".");
-
-                if (!n.isBlank() && !v.isBlank()) {
-                    if (n.contains(containsKey)) {
-                        return v;
-                    }
-                }
-            }
-        }
-
-        JsonNode markets = item.path("MDT");
-        if (markets.isArray()) {
-            for (JsonNode market : markets) {
-                String n = market.toString().toUpperCase(Locale.ROOT);
-                if (n.contains(containsKey)) {
-                    String v = findFirstDecimal(market.toString());
-                    if (!v.equals("-")) return v;
-                }
-            }
-        }
-
-        return "-";
-    }
-
-    private String findFirstDecimal(String input) {
-        java.util.regex.Matcher m = java.util.regex.Pattern.compile("(\\d+[\\.,]\\d+)").matcher(input);
-        if (m.find()) {
-            return m.group(1).replace(",", ".");
-        }
-        return "-";
-    }
-
-    private List<Map<String, String>> mergeMatchLists(List<Map<String, String>> primary, List<Map<String, String>> secondary) {
-        Map<String, Map<String, String>> merged = new LinkedHashMap<>();
-
-        for (Map<String, String> m : primary) {
-            merged.put(matchKey(m), new HashMap<>(m));
-        }
-
-        for (Map<String, String> m : secondary) {
-            String key = matchKey(m);
-            if (!merged.containsKey(key)) {
-                merged.put(key, new HashMap<>(m));
-            } else {
-                Map<String, String> base = merged.get(key);
-                fillIfMissing(base, m, "url");
-                fillIfMissing(base, m, "time");
-                fillIfMissing(base, m, "mbs");
-                fillIfMissing(base, m, "ms1");
-                fillIfMissing(base, m, "ms0");
-                fillIfMissing(base, m, "ms2");
-                fillIfMissing(base, m, "alt");
-                fillIfMissing(base, m, "ust");
-                fillIfMissing(base, m, "var");
-                fillIfMissing(base, m, "yok");
-            }
-        }
-
-        return new ArrayList<>(merged.values());
-    }
-
-    private List<Map<String, String>> enrichJsonMatchesWithDom(List<Map<String, String>> jsonMatches) {
-        try {
-            List<Map<String, String>> domMatches = scrollAndCollectMatchData();
-            return mergeMatchLists(jsonMatches, domMatches);
-        } catch (Exception e) {
-            System.out.println("⚠️ DOM enrich başarısız: " + e.getMessage());
-            return jsonMatches;
-        }
-    }
-
-    private String matchKey(Map<String, String> m) {
-        return (m.getOrDefault("name", "").trim().toLowerCase(Locale.ROOT) + "|" +
-                m.getOrDefault("time", "").trim());
-    }
-
-    private void fillIfMissing(Map<String, String> base, Map<String, String> from, String key) {
-        String b = base.getOrDefault(key, "");
-        String f = from.getOrDefault(key, "");
-        if (b == null || b.isBlank() || "-".equals(b) || "0".equals(b) || "-1".equals(b)) {
-            if (f != null && !f.isBlank()) {
-                base.put(key, f);
-            }
-        }
-    }
-
     // =============================================================
     // MAÇ SATIRLARINI DOM'DAN TOPLA
     // =============================================================
@@ -674,11 +113,11 @@ public class MatchScraper {
         List<Map<String, String>> collected = new ArrayList<>();
 
         int stable = 0;
-        int maxScroll = 180;
+        int maxScroll = 220;
         int prevSeen = 0;
 
         long startTime = System.currentTimeMillis();
-        long maxWaitTime = 360000;
+        long maxWaitTime = 420000;
 
         WebElement scrollContainer = findScrollableContainer();
 
@@ -705,22 +144,27 @@ public class MatchScraper {
 
                     if (name.isEmpty()) continue;
 
-                    String uniqueKey = (!href.isEmpty() ? href : name) + "|" + safeLinkTime(link);
-                    if (seen.contains(uniqueKey)) continue;
-                    seen.add(uniqueKey);
+                    // SADECE gerçek detail URL'si olanlar
+                    if (!isRealDetailUrl(href)) {
+                        continue;
+                    }
 
                     WebElement card = findMatchCard(link);
 
+                    String time = "-";
+                    try {
+                        time = card.findElement(By.cssSelector("span[data-testid^='time']")).getText().trim();
+                    } catch (Exception ignore) {
+                    }
+
+                    String uniqueKey = href + "|" + time;
+                    if (seen.contains(uniqueKey)) continue;
+                    seen.add(uniqueKey);
+
                     Map<String, String> map = new HashMap<>();
                     map.put("name", name);
-                    map.put("url", href.isBlank() ? "-" : href);
-
-                    try {
-                        String time = card.findElement(By.cssSelector("span[data-testid^='time']")).getText().trim();
-                        map.put("time", time);
-                    } catch (Exception ex) {
-                        map.put("time", "-");
-                    }
+                    map.put("url", href);
+                    map.put("time", time);
 
                     try {
                         WebElement mbsEl = card.findElement(By.cssSelector("[data-test-id='event_mbs'] span"));
@@ -738,7 +182,7 @@ public class MatchScraper {
                     map.put("yok", getOdd(card, "odd_Karş. Gol_Yok"));
 
                     collected.add(map);
-                    System.out.println("✅ " + name + " (" + map.get("time") + ") eklendi.");
+                    System.out.println("✅ " + name + " (" + time + ") eklendi. | URL=" + href);
                 } catch (Exception ex) {
                     System.out.println("⚠️ Kart parse edilemedi: " + ex.getMessage());
                 }
@@ -747,18 +191,18 @@ public class MatchScraper {
             int now = seen.size();
             if (now > prevSeen) {
                 stable = 0;
-                System.out.println("  ✓ Maç sayısı: " + now + " (+yeni " + (now - prevSeen) + ")");
+                System.out.println("  ✓ URL'li maç sayısı: " + now + " (+yeni " + (now - prevSeen) + ")");
             } else {
                 stable++;
-                System.out.println("  ⚠️ Stabilite sayacı: " + stable + "/15 (toplam: " + now + ")");
+                System.out.println("  ⚠️ Stabilite sayacı: " + stable + "/20 (toplam URL'li: " + now + ")");
             }
             prevSeen = now;
 
             if (i % 5 == 0) {
-                //debugSelectorCounts();
+                debugSelectorCounts();
             }
 
-            if (stable >= 15) {
+            if (stable >= 20) {
                 System.out.println("✅ Scroll tamamlandı");
                 break;
             }
@@ -770,28 +214,34 @@ public class MatchScraper {
                 try {
                     WebElement last = currentLinks.get(currentLinks.size() - 1);
                     js.executeScript("arguments[0].scrollIntoView({block:'center'});", last);
+                    Thread.sleep(400);
                     last.sendKeys(Keys.PAGE_DOWN);
+                    Thread.sleep(400);
                 } catch (Exception e) {
-                    js.executeScript("arguments[0].scrollTop = arguments[0].scrollTop + 1400;", scrollContainer);
+                    js.executeScript("arguments[0].scrollTop = arguments[0].scrollTop + 1600;", scrollContainer);
                 }
             } else {
-                js.executeScript("arguments[0].scrollTop = arguments[0].scrollTop + 1400;", scrollContainer);
+                js.executeScript("arguments[0].scrollTop = arguments[0].scrollTop + 1600;", scrollContainer);
             }
 
-            Thread.sleep(1500);
+            Thread.sleep(1800);
         }
 
-        System.out.println("🧩 TOPLAM MAÇ: " + seen.size());
+        System.out.println("🧩 TOPLAM URL'Lİ MAÇ: " + seen.size());
         return collected;
     }
 
-    private String safeLinkTime(WebElement link) {
-        try {
-            WebElement card = findMatchCard(link);
-            return card.findElement(By.cssSelector("span[data-testid^='time']")).getText().trim();
-        } catch (Exception e) {
-            return "-";
-        }
+    private boolean isRealDetailUrl(String href) {
+        if (href == null || href.isBlank()) return false;
+        if (!href.startsWith("http")) return false;
+
+        String h = href.toLowerCase(Locale.ROOT);
+
+        return h.contains("istatistik.nesine.com")
+                || h.contains("/ozet")
+                || h.contains("/detay")
+                || h.contains("/mac/")
+                || h.contains("/match/");
     }
 
     private String getOdd(WebElement matchEl, String testId) {
@@ -1047,6 +497,38 @@ public class MatchScraper {
         }
     }
 
+    private void expandAllSectionsIfPossible() {
+        List<By> candidates = Arrays.asList(
+                By.cssSelector("button[aria-expanded='false']"),
+                By.cssSelector("[data-test-id*='accordion'] button"),
+                By.cssSelector("[data-testid*='accordion'] button"),
+                By.xpath("//button[contains(@aria-label,'aç')]"),
+                By.xpath("//button[contains(., 'Daha Fazla')]"),
+                By.xpath("//button[contains(., 'Tümünü Göster')]")
+        );
+
+        int clicked = 0;
+
+        for (By by : candidates) {
+            try {
+                List<WebElement> elements = driver.findElements(by);
+                for (WebElement el : elements) {
+                    try {
+                        if (el.isDisplayed() && el.isEnabled()) {
+                            js.executeScript("arguments[0].click();", el);
+                            clicked++;
+                            Thread.sleep(500);
+                        }
+                    } catch (Exception ignore) {
+                    }
+                }
+            } catch (Exception ignore) {
+            }
+        }
+
+        System.out.println("📂 Açılabilen bölüm/buton sayısı: " + clicked);
+    }
+
     private WebElement findMatchCard(WebElement matchLink) {
         try {
             return (WebElement) js.executeScript("""
@@ -1080,5 +562,19 @@ public class MatchScraper {
 
         System.out.println("DEBUG all matchName elems: " +
                 driver.findElements(By.cssSelector("[data-test-id='matchName']")).size());
+
+        int realUrlCount = 0;
+        List<WebElement> links = driver.findElements(By.cssSelector("a[data-test-id='matchName']"));
+        for (WebElement link : links) {
+            try {
+                String href = Optional.ofNullable(link.getAttribute("href")).orElse("");
+                if (isRealDetailUrl(href)) {
+                    realUrlCount++;
+                }
+            } catch (Exception ignore) {
+            }
+        }
+
+        System.out.println("DEBUG real detail url count: " + realUrlCount);
     }
 }
