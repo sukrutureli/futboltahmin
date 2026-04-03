@@ -113,7 +113,7 @@ public class MatchScraper {
         List<Map<String, String>> collected = new ArrayList<>();
 
         int stable = 0;
-        int maxScroll = 220;
+        int maxScroll = 300;
         int prevSeen = 0;
 
         long startTime = System.currentTimeMillis();
@@ -218,13 +218,13 @@ public class MatchScraper {
                     last.sendKeys(Keys.PAGE_DOWN);
                     Thread.sleep(400);
                 } catch (Exception e) {
-                    js.executeScript("arguments[0].scrollTop = arguments[0].scrollTop + 1600;", scrollContainer);
+                    js.executeScript("arguments[0].scrollTop = arguments[0].scrollTop + 2400;", scrollContainer);
                 }
             } else {
-                js.executeScript("arguments[0].scrollTop = arguments[0].scrollTop + 1600;", scrollContainer);
+                js.executeScript("arguments[0].scrollTop = arguments[0].scrollTop + 2400;", scrollContainer);
             }
 
-            Thread.sleep(1800);
+            Thread.sleep(2500);
         }
 
         System.out.println("🧩 TOPLAM URL'Lİ MAÇ: " + seen.size());
