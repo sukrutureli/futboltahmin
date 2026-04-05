@@ -58,7 +58,7 @@ public class MatchScraper {
                     .format(DateTimeFormatter.ofPattern("dd.MM.yyyy"));
 
             // le=1 KORUNDU
-            String url = "https://www.nesine.com/iddaa?et=1&le=1&dt=" + date;
+            String url = "https://www.nesine.com/iddaa?et=1&le=1&bt=1&dt=" + date;
 
             System.out.println("🔗 URL açılıyor: " + url);
             driver.manage().deleteAllCookies();
