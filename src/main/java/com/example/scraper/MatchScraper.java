@@ -96,8 +96,6 @@ public class MatchScraper {
                 String href = asString(row.get("url"));
                 String time = asString(row.get("time"));
 
-                href = href.replaceAll("/ozet", "");
-
                 Odds odds = new Odds(
                         asDouble(row.get("ms1")),
                         asDouble(row.get("ms0")),
