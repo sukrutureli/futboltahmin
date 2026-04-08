@@ -17,11 +17,23 @@ import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
+import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
+
 public class MatchScraper {
 
     private WebDriver driver;
     private JavascriptExecutor js;
     private WebDriverWait wait;
+
+    private static final String DAILY_JSON_URL =
+        "https://sukrutureli.github.io/Scraper/output/latest.json";
 
     public MatchScraper() {
         setupDriver();
@@ -48,10 +60,109 @@ public class MatchScraper {
         wait = new WebDriverWait(driver, Duration.ofSeconds(20));
     }
 
+    public List<MatchInfo> fetchMatches() {
+    List<MatchInfo> list = new ArrayList<>();
+
+    try {
+        System.out.println("🔗 JSON açılıyor: " + DAILY_JSON_URL);
+
+        HttpURLConnection conn = (HttpURLConnection) new URL(DAILY_JSON_URL).openConnection();
+        conn.setRequestMethod("GET");
+        conn.setConnectTimeout(15000);
+        conn.setReadTimeout(30000);
+        conn.setRequestProperty("Accept", "application/json");
+        conn.setRequestProperty("User-Agent",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36");
+
+        int status = conn.getResponseCode();
+        if (status != 200) {
+            throw new RuntimeException("latest.json alınamadı. HTTP=" + status);
+        }
+
+        ObjectMapper mapper = new ObjectMapper();
+        mapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+
+        List<Map<String, Object>> rows;
+        try (InputStream is = conn.getInputStream()) {
+            rows = mapper.readValue(is, new TypeReference<List<Map<String, Object>>>() {});
+        }
+
+        System.out.println("✅ JSON satır sayısı: " + rows.size());
+
+        int index = 0;
+        for (Map<String, Object> row : rows) {
+            try {
+                String name = asString(row.get("name"));
+                String href = asString(row.get("url"));
+                String time = asString(row.get("time"));
+
+                Odds odds = new Odds(
+                        asDouble(row.get("ms1")),
+                        asDouble(row.get("ms0")),
+                        asDouble(row.get("ms2")),
+                        asDouble(row.get("ust")),
+                        asDouble(row.get("alt")),
+                        asDouble(row.get("var")),
+                        asDouble(row.get("yok")),
+                        asInt(row.get("mbs"), -1)
+                );
+
+                MatchInfo matchInfo = new MatchInfo(name, time, href, odds, index++);
+                list.add(matchInfo);
+
+                System.out.println("✅ " + name + " (" + time + ") eklendi. | URL=" + href);
+            } catch (Exception e) {
+                System.out.println("⚠️ Satır parse edilemedi: " + e.getMessage());
+            }
+        }
+
+        System.out.println("✅ Toplam maç: " + list.size());
+
+    } catch (Exception e) {
+        System.out.println("fetchMatches JSON hata: " + e.getMessage());
+        e.printStackTrace();
+    }
+
+    return list;
+}
+
+    private String asString(Object value) {
+    if (value == null) return "";
+    return String.valueOf(value).trim();
+}
+
+private double asDouble(Object value) {
+    try {
+        if (value == null) return 0.0;
+        if (value instanceof Number) {
+            return ((Number) value).doubleValue();
+        }
+        String s = String.valueOf(value).trim();
+        if (s.isEmpty() || s.equals("-")) return 0.0;
+        return Double.parseDouble(s.replace(",", "."));
+    } catch (Exception e) {
+        return 0.0;
+    }
+}
+
+private int asInt(Object value, int defaultValue) {
+    try {
+        if (value == null) return defaultValue;
+        if (value instanceof Number) {
+            return ((Number) value).intValue();
+        }
+        String s = String.valueOf(value).trim();
+        if (s.isEmpty()) return defaultValue;
+        return Integer.parseInt(s);
+    } catch (Exception e) {
+        return defaultValue;
+    }
+}
+
     // =============================================================
     // GÜNLÜK MAÇLARI ÇEK
     // =============================================================
-    public List<MatchInfo> fetchMatches() {
+    public List<MatchInfo> fetchMatchesSelenium() {
         List<MatchInfo> list = new ArrayList<>();
         try {
             String date = LocalDate.now(ZoneId.of("Europe/Istanbul"))
