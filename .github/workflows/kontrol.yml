@@ -1,6 +1,7 @@
 name: Kontrol – Build and Deploy to GitHub Pages
 
 env:
+  GITHUB_TOKEN: ${{ secrets.ADMIN_USER }}
   MODE: kontrol
 
 on:
