@@ -7,7 +7,7 @@ env:
 on:
   schedule:
     # ⚽ FUTBOL – şu an için *UTC 21:00* (TSİ 00:00 civarı)
-    - cron: '30 21 * * *'
+    - cron: '15 21 * * *'
   workflow_dispatch:
 
 jobs:
