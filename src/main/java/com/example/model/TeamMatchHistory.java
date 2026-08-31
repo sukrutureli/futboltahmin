@@ -173,6 +173,7 @@ public class TeamMatchHistory {
 					&& "A".equals(rekabetGecmisi.get(i).getResult())) {
 				ms2Rekabet++;
 			}
+		}
 
 		for (int i = 0; i < sonMaclarHome.size(); i++) {
 			if (sonMaclarHome.get(i).getHomeTeam().contains(teamEv) && "A".equals(sonMaclarHome.get(i).getResult())) {
