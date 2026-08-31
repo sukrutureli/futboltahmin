@@ -32,18 +32,33 @@ public class LastPredictionManager {
 	public void fillPredictions() {
 		for (int i = 0; i < historyManager.getTeamHistories().size(); i++) {
 			TeamMatchHistory th = historyManager.getTeamHistories().get(i);
+			PredictionResult predictionResult = predictionResults.get(i);
+			MatchInfo currentMatchInfo = matchInfo.get(i);
 
-			LastPrediction tempLastPrediction = new LastPrediction(matchInfo.get(i).getName(),
-					matchInfo.get(i).getTime());
+			LastPrediction tempLastPrediction = new LastPrediction(currentMatchInfo.getName(),
+					currentMatchInfo.getTime());
 
-			tempLastPrediction.setScore(predictionResults.get(i).getScoreline());
-			tempLastPrediction.setMbs(matchInfo.get(i).getOdds().getMbs());
+			tempLastPrediction.setScore(predictionResult.getScoreline());
+			tempLastPrediction.setMbs(currentMatchInfo.getOdds().getMbs());
 
-			if (calculatePrediction(th, predictionResults.get(i), matchInfo.get(i),
-					predictionResults.get(i).getPick()) != null) {
-				String withOdd = predictionResults.get(i).getPick() + getOddsAndPercentage(
-						predictionResults.get(i).getPick(), matchInfo.get(i), predictionResults.get(i));
-				tempLastPrediction.getPredictions().add(withOdd);
+			List<String> candidates = new ArrayList<>();
+
+			if (predictionResult.getpHome() > predictionResult.getpAway()
+					&& predictionResult.getpHome() > predictionResult.getpDraw()) {
+				candidates.add("MS1");
+			} else if (predictionResult.getpAway() > predictionResult.getpHome()
+					&& predictionResult.getpAway() > predictionResult.getpDraw()) {
+				candidates.add("MS2");
+			}
+
+			candidates.add(predictionResult.getpOver25() >= 0.5 ? "Üst" : "Alt");
+			candidates.add(predictionResult.getpBttsYes() >= 0.5 ? "Var" : "Yok");
+
+			for (String candidate : candidates) {
+				if (calculatePrediction(th, predictionResult, currentMatchInfo, candidate) != null) {
+					String withOdd = candidate + getOddsAndPercentage(candidate, currentMatchInfo, predictionResult);
+					tempLastPrediction.getPredictions().add(withOdd);
+				}
 			}
 
 			if (!tempLastPrediction.getPredictions().isEmpty()) {
@@ -54,8 +69,9 @@ public class LastPredictionManager {
 				PredictionData tempPredictionData = new PredictionData(homeTeam, awayTeam,
 						tempLastPrediction.getPredictions());
 				predictionData.add(tempPredictionData);
-				predictionData.get(predictionData.size() - 1).getStatuses()
-						.put(tempLastPrediction.getPredictions().get(0), "pending");
+				for (String prediction : tempLastPrediction.getPredictions()) {
+					predictionData.get(predictionData.size() - 1).getStatuses().put(prediction, "pending");
+				}
 			}
 		}
 	}
