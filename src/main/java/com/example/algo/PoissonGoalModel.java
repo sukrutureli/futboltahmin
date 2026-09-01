@@ -27,13 +27,13 @@ public class PoissonGoalModel implements BettingAlgorithm {
 		try {
 			// --- 1. Ev avantajı (form + rating farkıyla ayarlanır) ---
 			double baseHomeAdv = 1.10;
-			double ratingAdj = 1.0 + safeDiv((h.getRating100() - a.getRating100()), 600.0);
-			double formAdj = 1.0 + safeDiv((h.getAvgPointsPerMatch() - a.getAvgPointsPerMatch()), 2.5);
-			double homeAdv = baseHomeAdv * ratingAdj * formAdj;
+			double ratingAdj = clamp(1.0 + safeDiv((h.getRating100() - a.getRating100()), 600.0), 0.85, 1.15);
+			double formAdj = clamp(1.0 + safeDiv((h.getAvgPointsPerMatch() - a.getAvgPointsPerMatch()), 5.0), 0.75, 1.25);
+			double homeAdv = clamp(baseHomeAdv * ratingAdj * formAdj, 0.85, 1.35);
 
 			// --- 2. Son maç formuna göre çarpan ---
-			double formFactorH = 1.0 + 0.1 * (h.getAvgPointsPerMatch() - 1.0);
-			double formFactorA = 1.0 + 0.1 * (a.getAvgPointsPerMatch() - 1.0);
+			double formFactorH = clamp(1.0 + 0.1 * (h.getAvgPointsPerMatch() - 1.0), 0.85, 1.15);
+			double formFactorA = clamp(1.0 + 0.1 * (a.getAvgPointsPerMatch() - 1.0), 0.85, 1.15);
 
 			// --- 3. Beklenen goller (atak + savunma) ---
 			double lambdaH = homeAdv * (0.55 * h.getAvgGF() * formFactorH + 0.45 * a.getAvgGA());
@@ -89,6 +89,10 @@ public class PoissonGoalModel implements BettingAlgorithm {
 	}
 
 	// --- Yardımcı metotlar ---
+	private double clamp(double v, double lo, double hi) {
+		return Math.max(lo, Math.min(hi, v));
+	}
+
 	private double safeDiv(double a, double b) {
 		return (b == 0) ? 0 : a / b;
 	}
