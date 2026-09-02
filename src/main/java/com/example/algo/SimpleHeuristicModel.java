@@ -53,9 +53,23 @@ public class SimpleHeuristicModel implements BettingAlgorithm {
 			double pAway = ea / Z;
 
 			// --- 4. Over/Under ve BTTS hesaplamaları ---
-			double avgGoals = Math.max(0.5, (h.getAvgGF() + a.getAvgGF() + h.getAvgGA() + a.getAvgGA()) / 2.0);
-			double pOver25 = clamp(0.25 + 0.18 * (avgGoals - 2.4), 0.10, 0.90);
-			double pBttsYes = clamp(0.25 + 0.25 * (h.getAvgGF() * a.getAvgGF()), 0.10, 0.90);
+			// Hücum gücünü rakibin savunma ortalamasıyla eşleştir. Böylece yalnızca
+			// iki takımın toplam gol ortalamasına veya GF çarpımına aşırı güvenmeyiz.
+			double expectedHome = Math.max(0.05, (h.getAvgGF() + a.getAvgGA()) / 2.0);
+			double expectedAway = Math.max(0.05, (a.getAvgGF() + h.getAvgGA()) / 2.0);
+			double expectedTotal = expectedHome + expectedAway;
+
+			// Poisson yaklaşımıyla toplam golün 2.5 üstü olma olasılığı.
+			double p0 = Math.exp(-expectedTotal);
+			double p1 = p0 * expectedTotal;
+			double p2 = p1 * expectedTotal / 2.0;
+			double pOver25 = clamp(1.0 - (p0 + p1 + p2), 0.10, 0.90);
+
+			// İki takımın da en az bir gol bulması: rakip savunması doğrudan hesaba
+			// katılır ve tek tarafın gol atamama riski doğal olarak cezalandırılır.
+			double pHomeScores = 1.0 - Math.exp(-expectedHome);
+			double pAwayScores = 1.0 - Math.exp(-expectedAway);
+			double pBttsYes = clamp(pHomeScores * pAwayScores, 0.10, 0.90);
 
 			// --- 5. Piyasa karışımı (%15) ---
 			if (oddsOpt.isPresent()) {
