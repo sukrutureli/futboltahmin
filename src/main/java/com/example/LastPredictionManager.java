@@ -14,6 +14,10 @@ import com.example.model.TeamMatchHistory;
 import com.example.util.MathUtils;
 
 public class LastPredictionManager {
+	private static final double MIN_MS_CONFIDENCE = 0.65;
+	private static final double MIN_OVER_CONFIDENCE = 0.65;
+	private static final double MIN_BTTS_CONFIDENCE = 0.65;
+
 	private List<LastPrediction> lastPrediction;
 	private MatchHistoryManager historyManager;
 	private List<PredictionResult> predictionResults;
@@ -43,16 +47,25 @@ public class LastPredictionManager {
 
 			List<String> candidates = new ArrayList<>();
 
-			if (predictionResult.getpHome() > predictionResult.getpAway()
+			if (predictionResult.getpHome() >= MIN_MS_CONFIDENCE
+					&& predictionResult.getpHome() > predictionResult.getpAway()
 					&& predictionResult.getpHome() > predictionResult.getpDraw()) {
 				candidates.add("MS1");
-			} else if (predictionResult.getpAway() > predictionResult.getpHome()
+			} else if (predictionResult.getpAway() >= MIN_MS_CONFIDENCE
+					&& predictionResult.getpAway() > predictionResult.getpHome()
 					&& predictionResult.getpAway() > predictionResult.getpDraw()) {
 				candidates.add("MS2");
 			}
 
-			candidates.add(predictionResult.getpOver25() >= 0.5 ? "Üst" : "Alt");
-			candidates.add(predictionResult.getpBttsYes() >= 0.5 ? "Var" : "Yok");
+			if (predictionResult.getpOver25() >= MIN_OVER_CONFIDENCE) {
+				candidates.add("Üst");
+			} else if (predictionResult.getpOver25() < 0.5) {
+				candidates.add("Alt");
+			}
+
+			if (predictionResult.getpBttsYes() >= MIN_BTTS_CONFIDENCE) {
+				candidates.add("Var");
+			}
 
 			for (String candidate : candidates) {
 				if (calculatePrediction(th, predictionResult, currentMatchInfo, candidate) != null) {
