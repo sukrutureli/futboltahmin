@@ -11,6 +11,8 @@ import com.example.model.*;
  */
 public class SimpleHeuristicModel implements BettingAlgorithm {
 
+	private static final double OVER_CONFIDENCE_SHRINK = 0.85;
+
 	@Override
 	public String name() {
 		return "SimpleHeuristicModel";
@@ -63,7 +65,12 @@ public class SimpleHeuristicModel implements BettingAlgorithm {
 			double p0 = Math.exp(-expectedTotal);
 			double p1 = p0 * expectedTotal;
 			double p2 = p1 * expectedTotal / 2.0;
-			double pOver25 = clamp(1.0 - (p0 + p1 + p2), 0.10, 0.90);
+			double rawPOver25 = clamp(1.0 - (p0 + p1 + p2), 0.10, 0.90);
+
+			// Tek modelin aşırı yüksek/düşük gol güvenini yumuşat. Yönü değiştirmeden
+			// olasılığı %50'ye doğru %15 daraltıyoruz; ensemble hâlâ Poisson ağırlığını
+			// ve diğer sinyalleri kullanmaya devam ediyor.
+			double pOver25 = 0.50 + OVER_CONFIDENCE_SHRINK * (rawPOver25 - 0.50);
 
 			// İki takımın da en az bir gol bulması: rakip savunması doğrudan hesaba
 			// katılır ve tek tarafın gol atamama riski doğal olarak cezalandırılır.
