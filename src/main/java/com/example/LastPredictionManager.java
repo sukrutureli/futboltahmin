@@ -16,6 +16,7 @@ import com.example.util.MathUtils;
 public class LastPredictionManager {
 	private static final double MIN_MS_CONFIDENCE = 0.65;
 	private static final double MIN_OVER_CONFIDENCE = 0.65;
+	private static final double MIN_UNDER_CONFIDENCE = 0.60;
 	private static final double MIN_BTTS_CONFIDENCE = 0.65;
 
 	private List<LastPrediction> lastPrediction;
@@ -59,7 +60,7 @@ public class LastPredictionManager {
 
 			if (predictionResult.getpOver25() >= MIN_OVER_CONFIDENCE) {
 				candidates.add("Üst");
-			} else if (predictionResult.getpOver25() < 0.5) {
+			} else if ((1.0 - predictionResult.getpOver25()) >= MIN_UNDER_CONFIDENCE) {
 				candidates.add("Alt");
 			}
 
