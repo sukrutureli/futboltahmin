@@ -18,6 +18,7 @@ public class LastPredictionManager {
 	private static final double MIN_OVER_CONFIDENCE = 0.65;
 	private static final double MIN_UNDER_CONFIDENCE = 0.60;
 	private static final double MIN_BTTS_CONFIDENCE = 0.65;
+	private static final double MAX_MARKET_GAP = 0.15;
 
 	private List<LastPrediction> lastPrediction;
 	private MatchHistoryManager historyManager;
@@ -95,6 +96,10 @@ public class LastPredictionManager {
 			return null;
 		}
 
+		if (!passesMarketAgreement(tahmin, pr, matchInfo)) {
+			return null;
+		}
+
 		if (tahmin.equals("MS1")) {
 			if (matchInfo.getOdds().getMs1() > 1.29 && matchInfo.getOdds().getMs1() < 1.9 && h.getMax().equals(tahmin)
 					&& isScoreOk(pr.getScoreline(), tahmin)) {
@@ -141,6 +146,42 @@ public class LastPredictionManager {
 		}
 
 		return null;
+	}
+
+	private boolean passesMarketAgreement(String tahmin, PredictionResult pr, MatchInfo matchInfo) {
+		double modelProbability;
+		double selectedOdd;
+		double oppositeOdd;
+
+		if (tahmin.equals("Üst")) {
+			modelProbability = pr.getpOver25();
+			selectedOdd = matchInfo.getOdds().getOver25();
+			oppositeOdd = matchInfo.getOdds().getUnder25();
+		} else if (tahmin.equals("Alt")) {
+			modelProbability = 1.0 - pr.getpOver25();
+			selectedOdd = matchInfo.getOdds().getUnder25();
+			oppositeOdd = matchInfo.getOdds().getOver25();
+		} else if (tahmin.equals("Var")) {
+			modelProbability = pr.getpBttsYes();
+			selectedOdd = matchInfo.getOdds().getBttsYes();
+			oppositeOdd = matchInfo.getOdds().getBttsNo();
+		} else if (tahmin.equals("Yok")) {
+			modelProbability = 1.0 - pr.getpBttsYes();
+			selectedOdd = matchInfo.getOdds().getBttsNo();
+			oppositeOdd = matchInfo.getOdds().getBttsYes();
+		} else {
+			return true;
+		}
+
+		if (selectedOdd <= 0.0 || oppositeOdd <= 0.0) {
+			return true;
+		}
+
+		double selectedRaw = 1.0 / selectedOdd;
+		double oppositeRaw = 1.0 / oppositeOdd;
+		double marketProbability = selectedRaw / (selectedRaw + oppositeRaw);
+
+		return modelProbability - marketProbability <= MAX_MARKET_GAP;
 	}
 
 	private boolean isScoreOk(String score, String tahmin) {
