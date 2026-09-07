@@ -12,10 +12,7 @@ import java.util.Map;
 import java.util.Optional;
 
 import com.example.algo.BettingAlgorithm;
-import com.example.algo.EnsembleModel;
-import com.example.algo.FormMomentumModel;
-import com.example.algo.PoissonGoalModel;
-import com.example.algo.SimpleHeuristicModel;
+import com.example.algo.EvidenceWeightedModel;
 import com.example.model.Match;
 import com.example.model.MatchInfo;
 import com.example.model.PredictionData;
@@ -112,15 +109,13 @@ public class Application {
 				}
 			}
 
-			BettingAlgorithm poisson = new PoissonGoalModel();
-			BettingAlgorithm heur = new SimpleHeuristicModel();
-			BettingAlgorithm formMomentum = new FormMomentumModel();
-			EnsembleModel ensemble = new EnsembleModel(List.of(poisson, heur, formMomentum));
+			BettingAlgorithm evidenceWeighted = new EvidenceWeightedModel();
 
 			for (Match m : matchStats) {
-				results.add(ensemble.predict(m, Optional.ofNullable(m.getOdds())));
+				results.add(evidenceWeighted.predict(m, Optional.ofNullable(m.getOdds())));
 			}
 
+			System.out.println("Aktif model: " + evidenceWeighted.name());
 			System.out.println("MATCHES SIZE = " + matches.size());
 			System.out.println("HISTORY SIZE = " + historyManager.getTeamHistories().size());
 			System.out.println("MATCHSTATS SIZE = " + matchStats.size());
