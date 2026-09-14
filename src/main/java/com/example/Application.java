@@ -117,6 +117,16 @@ public class Application {
 		try {
 			System.out.println("Zaman: " + LocalDateTime.now(istanbulZone));
 			scraper = new ControlScraper();
+
+			// GEÇİCİ TEST: ilk geçerli istatistik detay sayfasında skor bilgisini logla.
+			for (MatchInfo match : matches) {
+				if (match != null && match.hasDetailUrl()) {
+					System.out.println("🧪 Detail skor testi: " + match.getName());
+					scraper.debugDetailPage(match.getDetailUrl());
+					break;
+				}
+			}
+
 			Map<String, String> updatedScores = scraper.fetchFinishedScores(rsList);
 			List<PredictionData> predictions = PredictionUpdater.updateFromGithub(updatedScores, "PredictionData-");
 			for (int i = 0; i < matches.size(); i++) {
