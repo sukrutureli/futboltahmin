@@ -114,21 +114,16 @@ public class Application {
 		List<PredictionResult> results = JsonReader.readFromGithub("futbol", "PredictionResult", JsonReader.getToday(), PredictionResult.class);
 		List<TeamMatchHistory> teamHistoryList = JsonReader.readFromGithub("futbol", "TeamMatchHistory", JsonReader.getToday(), TeamMatchHistory.class);
 		List<RealScores> rsList = JsonReader.readFromGithub("futbol", "RealScores", JsonReader.getToday(), RealScores.class);
+		List<PredictionData> predictionData = JsonReader.readFromGithub("futbol", "PredictionData", JsonReader.getToday(), PredictionData.class);
 		try {
 			System.out.println("Zaman: " + LocalDateTime.now(istanbulZone));
 			scraper = new ControlScraper();
 
-			// GEÇİCİ TEST: ilk geçerli istatistik detay sayfasında skor bilgisini logla.
-			for (MatchInfo match : matches) {
-				if (match != null && match.hasDetailUrl()) {
-					System.out.println("🧪 Detail skor testi: " + match.getName());
-					scraper.debugDetailPage(match.getDetailUrl());
-					break;
-				}
-			}
-
-			Map<String, String> updatedScores = scraper.fetchFinishedScores(rsList);
+			// Tahmin verilen maçların kendi Nesine detail URL'lerini kullan.
+			// Böylece canlı skor sayfasındaki farklı/kısaltılmış takım isimlerine bağımlı değiliz.
+			Map<String, String> updatedScores = scraper.fetchFinishedScoresFromDetails(rsList, matches, predictionData);
 			List<PredictionData> predictions = PredictionUpdater.updateFromGithub(updatedScores, "PredictionData-");
+
 			for (int i = 0; i < matches.size(); i++) {
 				if (i < teamHistoryList.size()) historyManager.addTeamHistory(teamHistoryList.get(i));
 				else { MatchInfo match = matches.get(i); historyManager.addTeamHistory(new TeamMatchHistory(match.getName(), "-", "-", match.getDetailUrl())); }
