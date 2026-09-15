@@ -41,13 +41,15 @@ public class ControlScraper {
 	}
 
 	// =============================================================
-	// GEÇİCİ DEBUG: İstatistik detay sayfasında skor var mı kontrol et
+	// GEÇİCİ DEBUG: İstatistik alternatif görünümünde skor var mı kontrol et
 	// =============================================================
 	public void debugDetailPage(String detailUrl) {
 		try {
+			String alternativeUrl = toAlternativeDetailUrl(detailUrl);
 			System.out.println("\n========== DETAIL SCORE DEBUG ==========");
-			System.out.println("URL: " + detailUrl);
-			driver.get(detailUrl);
+			System.out.println("ORIGINAL URL: " + detailUrl);
+			System.out.println("ALTERNATIVE URL: " + alternativeUrl);
+			driver.get(alternativeUrl);
 			waitForPageLoad(driver, 15);
 			Thread.sleep(2500);
 
@@ -80,6 +82,12 @@ public class ControlScraper {
 		} catch (Exception e) {
 			System.out.println("⚠️ Detail debug hatası: " + e.getMessage());
 		}
+	}
+
+	private String toAlternativeDetailUrl(String detailUrl) {
+		if (detailUrl == null || detailUrl.isBlank()) return detailUrl;
+		if (detailUrl.contains("istatistik.nesine.com/p1/")) return detailUrl;
+		return detailUrl.replace("istatistik.nesine.com/", "istatistik.nesine.com/p1/");
 	}
 
 	// =============================================================
