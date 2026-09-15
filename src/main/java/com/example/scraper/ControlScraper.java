@@ -34,65 +34,64 @@ public class ControlScraper {
 		wait = new WebDriverWait(driver, Duration.ofSeconds(15));
 	}
 
+	// PredictionData sadece mevcut çağrı uyumluluğu için parametre olarak duruyor.
+	// Skor kontrolü artık yalnızca kupondaki maçlarda değil, MatchInfo içindeki TÜM maçlarda yapılır.
 	public Map<String, String> fetchFinishedScoresFromDetails(List<RealScores> rsList,
 			List<MatchInfo> matches, List<PredictionData> predictions) {
 		Map<String, String> scores = new HashMap<>();
 		if (rsList != null && !rsList.isEmpty()) results.addAll(rsList);
-		if (matches == null || predictions == null) return scores;
+		if (matches == null) return scores;
 
-		for (PredictionData prediction : predictions) {
-			String predictionName = prediction.getHomeTeam() + " - " + prediction.getAwayTeam();
-			MatchInfo matchInfo = findMatchInfo(matches, predictionName);
-			if (matchInfo == null || !matchInfo.hasDetailUrl()) {
-				System.out.println("⚠️ Detail URL bulunamadı: " + predictionName);
+		System.out.println("🔎 Detail skor kontrol edilecek toplam maç: " + matches.size());
+		for (MatchInfo matchInfo : matches) {
+			if (matchInfo == null || matchInfo.getName() == null) continue;
+			String matchName = matchInfo.getName().trim();
+
+			if (!matchInfo.hasDetailUrl()) {
+				System.out.println("⚠️ Detail URL bulunamadı: " + matchName);
 				continue;
 			}
 
 			try {
 				String url = toAlternativeDetailUrl(matchInfo.getDetailUrl());
-				System.out.println("🔎 Skor kontrol: " + predictionName + " | " + url);
+				System.out.println("🔎 Skor kontrol: " + matchName + " | " + url);
 				driver.get(url);
 				waitForPageLoad(driver, 15);
 
 				WebElement scoreboard = wait.until(ExpectedConditions.presenceOfElementLocated(
 						By.cssSelector(".broadage-score-container")));
 				String scoreboardText = safeText(scoreboard, driver);
-				System.out.println("📋 SCOREBOARD: " + predictionName + " | " + scoreboardText);
+				System.out.println("📋 SCOREBOARD: " + matchName + " | " + scoreboardText);
 
 				// textContent bitmiş maçta örn. "Toluca (K)6MS0Club Tijuana (K)İY:3-0" dönüyor.
-				// Bu nedenle kelime sınırı regex'i kullanılamaz; MS rakamlara bitişik gelebiliyor.
 				if (scoreboardText == null || !scoreboardText.contains("MS")) {
-					System.out.println("⏳ Maç henüz bitmemiş: " + predictionName + " | " + scoreboardText);
+					System.out.println("⏳ Maç henüz bitmemiş: " + matchName + " | " + scoreboardText);
 					continue;
 				}
 
 				String homeScore = safeText(scoreboard.findElement(By.cssSelector(".broadage-home-team-score")), driver);
 				String awayScore = safeText(scoreboard.findElement(By.cssSelector(".broadage-away-team-score")), driver);
 				if (!homeScore.matches("\\d+") || !awayScore.matches("\\d+")) {
-					System.out.println("⚠️ Geçersiz skor: " + predictionName + " | " + homeScore + "-" + awayScore);
+					System.out.println("⚠️ Geçersiz skor: " + matchName + " | " + homeScore + "-" + awayScore);
 					continue;
 				}
 
 				String score = homeScore + "-" + awayScore;
-				scores.put(predictionName, score);
-				upsertRealScore(prediction.getHomeTeam(), prediction.getAwayTeam(), score);
-				System.out.println("✅ DETAIL " + predictionName + " → " + score);
+				scores.put(matchName, score);
+
+				String[] teams = matchName.split(" - ", 2);
+				if (teams.length == 2) upsertRealScore(teams[0].trim(), teams[1].trim(), score);
+
+				System.out.println("✅ DETAIL " + matchName + " → " + score);
 			} catch (TimeoutException e) {
-				System.out.println("⚠️ Detail skor alanı bulunamadı: " + predictionName);
+				System.out.println("⚠️ Detail skor alanı bulunamadı: " + matchName);
 			} catch (Exception e) {
-				System.out.println("⚠️ Detail skor hatası: " + predictionName + " | " + e.getMessage());
+				System.out.println("⚠️ Detail skor hatası: " + matchName + " | " + e.getMessage());
 			}
 		}
 
-		System.out.println("⚽ Detail URL'den bitmiş tahmin maçı sayısı: " + scores.size());
+		System.out.println("⚽ Detail URL'den bitmiş toplam maç sayısı: " + scores.size());
 		return scores;
-	}
-
-	private MatchInfo findMatchInfo(List<MatchInfo> matches, String predictionName) {
-		for (MatchInfo match : matches) {
-			if (match != null && match.getName() != null && match.getName().trim().equals(predictionName.trim())) return match;
-		}
-		return null;
 	}
 
 	private void upsertRealScore(String home, String away, String score) {
