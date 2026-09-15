@@ -34,8 +34,6 @@ public class ControlScraper {
 		wait = new WebDriverWait(driver, Duration.ofSeconds(15));
 	}
 
-	// Tahmin verilen maçları kendi Nesine istatistik URL'lerinden kontrol eder.
-	// /p1/{eventId} alternatif görünümünde ana skor alanı ve MS bilgisi birlikte bulunuyor.
 	public Map<String, String> fetchFinishedScoresFromDetails(List<RealScores> rsList,
 			List<MatchInfo> matches, List<PredictionData> predictions) {
 		Map<String, String> scores = new HashMap<>();
@@ -59,9 +57,11 @@ public class ControlScraper {
 				WebElement scoreboard = wait.until(ExpectedConditions.presenceOfElementLocated(
 						By.cssSelector(".broadage-score-container")));
 				String scoreboardText = safeText(scoreboard, driver);
+				System.out.println("📋 SCOREBOARD: " + predictionName + " | " + scoreboardText);
 
-				// Skor canlıyken de görünebilir; yalnızca MS varsa kesin sonuç olarak kaydet.
-				if (scoreboardText == null || !scoreboardText.matches("(?s).*\\bMS\\b.*")) {
+				// textContent bitmiş maçta örn. "Toluca (K)6MS0Club Tijuana (K)İY:3-0" dönüyor.
+				// Bu nedenle kelime sınırı regex'i kullanılamaz; MS rakamlara bitişik gelebiliyor.
+				if (scoreboardText == null || !scoreboardText.contains("MS")) {
 					System.out.println("⏳ Maç henüz bitmemiş: " + predictionName + " | " + scoreboardText);
 					continue;
 				}
@@ -90,9 +90,7 @@ public class ControlScraper {
 
 	private MatchInfo findMatchInfo(List<MatchInfo> matches, String predictionName) {
 		for (MatchInfo match : matches) {
-			if (match != null && match.getName() != null && match.getName().trim().equals(predictionName.trim())) {
-				return match;
-			}
+			if (match != null && match.getName() != null && match.getName().trim().equals(predictionName.trim())) return match;
 		}
 		return null;
 	}
@@ -117,7 +115,7 @@ public class ControlScraper {
 		return detailUrl.replace("istatistik.nesine.com/", "istatistik.nesine.com/p1/");
 	}
 
-	// Eski canlı skor yöntemi şimdilik fallback/test amacıyla korunuyor.
+	// Eski canlı skor yöntemi fallback/test amacıyla korunuyor.
 	public Map<String, String> fetchFinishedScores(List<RealScores> rsList) {
 		Map<String, String> scores = new HashMap<>();
 		if (rsList != null && !rsList.isEmpty()) results.addAll(rsList);
@@ -127,25 +125,17 @@ public class ControlScraper {
 			waitForPageLoad(driver, 15);
 			Thread.sleep(1500);
 			clickYesterdayTabIfNeeded(driver);
-
 			JavascriptExecutor js = (JavascriptExecutor) driver;
-			for (int i = 0; i < 4; i++) {
-				js.executeScript("window.scrollTo(0, document.body.scrollHeight);");
-				Thread.sleep(1200);
-			}
-
+			for (int i = 0; i < 4; i++) { js.executeScript("window.scrollTo(0, document.body.scrollHeight);"); Thread.sleep(1200); }
 			String selector = "li[class*='match'], li[class*='extra-time']";
 			wait.until(ExpectedConditions.presenceOfAllElementsLocatedBy(By.cssSelector(selector)));
 			List<WebElement> matches = driver.findElements(By.cssSelector(selector));
 			System.out.println("Toplam maç bulundu: " + matches.size());
-
 			for (WebElement match : matches) {
 				try {
 					String cls = match.getAttribute("class");
 					if (cls == null) continue;
-					if (!(cls.contains("finished") || cls.contains("unlive") || cls.contains("not-play")
-							|| cls.contains("extra-time"))) continue;
-
+					if (!(cls.contains("finished") || cls.contains("unlive") || cls.contains("not-play") || cls.contains("extra-time"))) continue;
 					WebElement board = match.findElement(By.cssSelector(".teams-score-content .board"));
 					String home = safeText(match.findElement(By.cssSelector(".home-team span[aria-hidden='true']")), driver);
 					String away = safeText(match.findElement(By.cssSelector(".away-team span[aria-hidden='true']")), driver);
@@ -155,13 +145,9 @@ public class ControlScraper {
 					upsertRealScore(home, away, score);
 					scores.put(home + " - " + away, score);
 					System.out.println("✅ " + home + " - " + away + " → " + score);
-				} catch (Exception e) {
-					System.out.println("⚠️ Tekil maç hatası: " + e.getMessage());
-				}
+				} catch (Exception e) { System.out.println("⚠️ Tekil maç hatası: " + e.getMessage()); }
 			}
-		} catch (Exception e) {
-			System.out.println("fetchFinishedScores hata: " + e.getMessage());
-		}
+		} catch (Exception e) { System.out.println("fetchFinishedScores hata: " + e.getMessage()); }
 		return scores;
 	}
 
@@ -175,12 +161,7 @@ public class ControlScraper {
 			if (now.isAfter(LocalTime.MIDNIGHT) && now.isBefore(LocalTime.of(6, 0))) {
 				List<WebElement> tabs = driver.findElements(By.xpath("//span[contains(@class,'menu-item') and contains(@class,'tab')]"));
 				WebElement yesterdayTab = null;
-				for (int i = 0; i < tabs.size(); i++) {
-					if (tabs.get(i).getText().contains("Bugün") && i > 0) {
-						yesterdayTab = tabs.get(i - 1);
-						break;
-					}
-				}
+				for (int i = 0; i < tabs.size(); i++) if (tabs.get(i).getText().contains("Bugün") && i > 0) { yesterdayTab = tabs.get(i - 1); break; }
 				if (yesterdayTab != null) {
 					js.executeScript("arguments[0].classList.remove('disabled');", yesterdayTab);
 					js.executeScript("arguments[0].scrollIntoView({block:'center'});", yesterdayTab);
@@ -189,14 +170,10 @@ public class ControlScraper {
 					Thread.sleep(1500);
 				}
 			}
-		} catch (Exception e) {
-			System.out.println("⚠️ Dün sekmesine geçilemedi: " + e.getMessage());
-		}
+		} catch (Exception e) { System.out.println("⚠️ Dün sekmesine geçilemedi: " + e.getMessage()); }
 	}
 
-	public void close() {
-		try { driver.quit(); } catch (Exception ignore) {}
-	}
+	public void close() { try { driver.quit(); } catch (Exception ignore) {} }
 
 	private String safeText(WebElement el, WebDriver driver) {
 		try {
@@ -204,19 +181,14 @@ public class ControlScraper {
 			if (text == null || text.trim().isEmpty()) text = el.getText();
 			return text == null ? "-" : text.trim();
 		} catch (Exception e) {
-			try {
-				return ((JavascriptExecutor) driver)
-						.executeScript("return arguments[0].innerText || arguments[0].textContent;", el).toString().trim();
-			} catch (Exception inner) { return "-"; }
+			try { return ((JavascriptExecutor) driver).executeScript("return arguments[0].innerText || arguments[0].textContent;", el).toString().trim(); }
+			catch (Exception inner) { return "-"; }
 		}
 	}
 
 	public void waitForPageLoad(WebDriver driver, int timeoutSeconds) {
-		new WebDriverWait(driver, Duration.ofSeconds(timeoutSeconds))
-				.until(webDriver -> ((JavascriptExecutor) webDriver).executeScript("return document.readyState").equals("complete"));
+		new WebDriverWait(driver, Duration.ofSeconds(timeoutSeconds)).until(webDriver -> ((JavascriptExecutor) webDriver).executeScript("return document.readyState").equals("complete"));
 	}
 
-	public List<RealScores> getResults() {
-		return results;
-	}
+	public List<RealScores> getResults() { return results; }
 }
